@@ -1,7 +1,7 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FlexSendMessage
 import requests
 import os
 
@@ -36,6 +36,43 @@ def get_weather_forecast():
     temp_min = data["main"]["temp_min"]
     return weather, temp_max, temp_min
 
+# Flex Message（症状アンケート）
+def create_symptom_survey():
+    contents = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "症状チェック", "weight": "bold", "size": "lg"}
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {"type": "text", "text": "現在の症状を選んでください：", "wrap": True},
+                {
+                    "type": "button",
+                    "action": {"type": "message", "label": "咳が出る", "text": "咳が出る"},
+                    "style": "secondary"
+                },
+                {
+                    "type": "button",
+                    "action": {"type": "message", "label": "熱がある", "text": "熱がある"},
+                    "style": "secondary"
+                },
+                {
+                    "type": "button",
+                    "action": {"type": "message", "label": "喉が痛い", "text": "喉が痛い"},
+                    "style": "secondary"
+                }
+            ]
+        }
+    }
+    return FlexSendMessage(alt_text="症状アンケートです", contents=contents)
+
 # LINE Webhookエンドポイント
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -55,6 +92,15 @@ def handle_message(event):
     text = event.message.text
     greetings = ["こんにちは", "こんにちわ", "おはよう", "おはようございます", "こんばんわ", "こんばんは"]
 
+    # アンケート送信トリガー
+    if "アンケート" in text or "あんけーと" in text:
+        line_bot_api.reply_message(
+            event.reply_token,
+            create_symptom_survey()
+        )
+        return
+
+    # あいさつ
     if any(greet in text for greet in greetings):
         try:
             profile = line_bot_api.get_profile(event.source.user_id)
@@ -75,7 +121,7 @@ def handle_message(event):
         else:
             reply_text = f"{display_name}さん、天気情報の取得に失敗しました。"
     else:
-        reply_text = f"「{text}」って言ったね！"
+        reply_text = "ご連絡ありがとうございます。ご用件をお知らせください。"
 
     line_bot_api.reply_message(
         event.reply_token,
