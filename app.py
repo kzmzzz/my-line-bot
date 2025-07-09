@@ -18,7 +18,6 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 def get_weather_forecast():
     api_key = os.getenv("OPENWEATHER_API_KEY")
     if not api_key:
-        print("DEBUG: APIキーが取得できませんでした")
         return None, None, None
 
     city = "Tokyo,jp"
@@ -37,26 +36,6 @@ def get_weather_forecast():
     temp_min = data["main"]["temp_min"]
     return weather, temp_max, temp_min
 
-# テスト用エンドポイント
-@app.route("/test_api")
-def test_api():
-    api_key = os.getenv("OPENWEATHER_API_KEY")
-    if not api_key:
-        return "APIキーが取得できませんでした", 500
-
-    print("DEBUG: APIキー取得成功 →", api_key[:5] + "..." + api_key[-5:])
-    city = "Tokyo,jp"
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&lang=ja&units=metric"
-
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print("DEBUG: リクエスト失敗", e)
-        return f"リクエストエラー: {e}", 500
-
-    return "天気情報取得成功", 200
-
 # LINE Webhookエンドポイント
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -74,8 +53,9 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text
+    greetings = ["こんにちは", "こんにちわ", "おはよう","おはようございます","こんばんわ", "こんばんは"]
 
-    if "こんにちは" in text:
+    if any(greet in text for greet in greetings):
         weather, temp_max, temp_min = get_weather_forecast()
         print("DEBUG:", weather, temp_max, temp_min)
 
