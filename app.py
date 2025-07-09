@@ -16,7 +16,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # 天気情報取得関数（OpenWeatherMap使用）
 def get_weather_forecast():
-    api_key = os.getenv("OPENWEATHER_API_KEY")  # ← Renderの環境変数に追加する必要あり
+    api_key = os.getenv("97dd23114d44fd73b3ae18ced13ae48e")  # ← Renderの環境変数に追加する必要あり
     if not api_key:
         return None, None, None  # APIキーが未設定の場合の対策
 
