@@ -26,7 +26,8 @@ def get_weather_forecast():
     try:
         response = requests.get(url)
         response.raise_for_status()
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        print("DEBUG: Request failed:", e)
         return None, None, None
 
     data = response.json()
@@ -55,6 +56,8 @@ def handle_message(event):
 
     if "こんにちは" in text:
         weather, temp_max, temp_min = get_weather_forecast()
+        print("DEBUG:", weather, temp_max, temp_min)  # ← 追加された行
+
         if weather:
             reply_text = (
                 f"東京MITクリニック付近の天気は「{weather}」です。\n"
