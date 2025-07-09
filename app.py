@@ -53,19 +53,27 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text
-    greetings = ["こんにちは", "こんにちわ", "おはよう","おはようございます","こんばんわ", "こんばんは"]
+    greetings = ["こんにちは", "こんにちわ", "おはよう", "おはようございます", "こんばんわ", "こんばんは"]
 
     if any(greet in text for greet in greetings):
+        try:
+            profile = line_bot_api.get_profile(event.source.user_id)
+            display_name = profile.display_name
+        except Exception as e:
+            print("DEBUG: プロフィール取得に失敗:", e)
+            display_name = "お客さま"
+
         weather, temp_max, temp_min = get_weather_forecast()
         print("DEBUG:", weather, temp_max, temp_min)
 
         if weather:
             reply_text = (
+                f"{text}、{display_name}さん。\n"
                 f"東京MITクリニック付近の天気は「{weather}」です。\n"
                 f"最高気温は {temp_max}℃、最低気温は {temp_min}℃ です。"
             )
         else:
-            reply_text = "天気情報の取得に失敗しました。"
+            reply_text = f"{display_name}さん、天気情報の取得に失敗しました。"
     else:
         reply_text = f"「{text}」って言ったね！"
 
