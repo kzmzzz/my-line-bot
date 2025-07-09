@@ -7,28 +7,35 @@ import os
 
 app = Flask(__name__)
 
-# LINE Botの設定（環境変数から読み込むのがベスト）
+# LINE Botの設定（Renderの環境変数から取得）
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# 天気情報取得関数（OpenWeatherMap）
+# 天気情報取得関数（OpenWeatherMap使用）
 def get_weather_forecast():
-    api_key = os.getenv("OPENWEATHER_API_KEY")  # Renderに設定したAPIキー
+    api_key = os.getenv("OPENWEATHER_API_KEY")  # ← Renderの環境変数に追加する必要あり
+    if not api_key:
+        return None, None, None  # APIキーが未設定の場合の対策
+
     city = "Tokyo,jp"
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&lang=ja&units=metric"
-    response = requests.get(url)
-    if response.status_code != 200:
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
         return None, None, None
+
     data = response.json()
     weather = data["weather"][0]["description"]
     temp_max = data["main"]["temp_max"]
     temp_min = data["main"]["temp_min"]
     return weather, temp_max, temp_min
 
-# LINE Webhook受信エンドポイント
+# LINE Webhookエンドポイント
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
