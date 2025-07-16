@@ -55,6 +55,14 @@ def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
+
+    # 症状チェック開始
+    if text == "症状チェック":
+        user_states[user_id] = {}
+        reply = "お住まいの都道府県を教えてください。"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+        return
+
     step = get_next_question(state)
 
     if step == "prefecture":
