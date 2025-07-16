@@ -19,7 +19,6 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 user_states = {}
 
-# 質問の順序管理
 def get_next_question(state):
     steps = [
         "prefecture", "name", "phone", "birthday",
@@ -32,7 +31,6 @@ def get_next_question(state):
             return step
     return None
 
-# 年齢計算
 def calculate_age(birthdate_str):
     try:
         birthdate = datetime.strptime(birthdate_str, "%Y/%m/%d")
@@ -42,7 +40,6 @@ def calculate_age(birthdate_str):
     except:
         return None
 
-# メッセージ受信
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
@@ -58,25 +55,28 @@ def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
-
     step = get_next_question(state)
 
-    if text.lower() in ["こんにちは", "おはよう", "こんばんは"]:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="こんにちは！症状チェックを始めます。まず、お住まいの都道府県を教えてください。"))
-        return
-
-    # ステップ別処理
     if step == "prefecture":
-        state["prefecture"] = text
-        reply = "保険証と同じ漢字のフルネームでお名前を教えてください。"
+        if text:
+            state["prefecture"] = text
+            reply = "保険証と同じ漢字のフルネームでお名前を教えてください。"
+        else:
+            reply = "都道府県名を入力してください。"
 
     elif step == "name":
-        state["name"] = text
-        reply = "電話番号をハイフンなしで入力してください。"
+        if text:
+            state["name"] = text
+            reply = "電話番号をハイフンなしで入力してください。"
+        else:
+            reply = "お名前を入力してください。"
 
     elif step == "phone":
-        state["phone"] = text
-        reply = "生年月日を yyyy/mm/dd の形式で入力してください。"
+        if text.isdigit() and len(text) == 11:
+            state["phone"] = text
+            reply = "生年月日を yyyy/mm/dd の形式で入力してください。"
+        else:
+            reply = "電話番号は11桁の数字で入力してください。例：09012345678"
 
     elif step == "birthday":
         age = calculate_age(text)
@@ -93,22 +93,46 @@ def handle_text(event):
             send_buttons(event.reply_token, "性別を選択してください。", buttons)
             return
 
+    elif step == "height":
+        if text.isdigit():
+            state["height"] = text
+            reply = "体重を数字（kg）で入力してください。"
+        else:
+            reply = "身長は数字（cm）で入力してください。"
+
+    elif step == "weight":
+        if text.isdigit():
+            state["weight"] = text
+            reply = "現在、治療中または通院中の病気はありますか？（はい／いいえ）"
+            return send_yes_no(event.reply_token, "illness")
+        else:
+            reply = "体重は数字（kg）で入力してください。"
+
     elif step == "illness_detail":
-        state["illness_detail"] = text
-        reply = "現在、おくすりを服用していますか？（はい／いいえ）"
-        return send_yes_no(event.reply_token, "medication")
+        if text:
+            state["illness_detail"] = text
+            reply = "現在、おくすりを服用していますか？（はい／いいえ）"
+            return send_yes_no(event.reply_token, "medication")
+        else:
+            reply = "病名または治療内容を入力してください。"
 
     elif step == "medication_detail":
-        state["medication_detail"] = text
-        reply = "アレルギーはありますか？（はい／いいえ）"
-        return send_yes_no(event.reply_token, "allergy")
+        if text:
+            state["medication_detail"] = text
+            reply = "アレルギーはありますか？（はい／いいえ）"
+            return send_yes_no(event.reply_token, "allergy")
+        else:
+            reply = "服用中のお薬の名前を入力してください。"
 
     elif step == "allergy_detail":
-        state["allergy_detail"] = text
-        return show_confirmation(event.reply_token, state)
+        if text:
+            state["allergy_detail"] = text
+            return show_confirmation(event.reply_token, state)
+        else:
+            reply = "アレルギー名を入力してください。"
 
     else:
-        reply = "「こんにちは」から始めてください。"
+        reply = "次の入力をお願いします。"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
@@ -123,7 +147,7 @@ def handle_postback(event):
         reply = "身長を数字（cm）で入力してください。"
 
     elif data.startswith("yesno_"):
-        key, value = data[7:].split("_")  # yesno_illness_yes
+        key, value = data[7:].split("_")
         state[key] = value
         if key == "illness" and value == "yes":
             reply = "病気の名称や治療内容を教えてください。"
