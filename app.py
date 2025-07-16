@@ -56,7 +56,6 @@ def handle_text(event):
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
-    # 症状チェック開始
     if text == "症状チェック":
         user_states[user_id] = {}
         reply = "お住まいの都道府県を教えてください。"
@@ -112,7 +111,7 @@ def handle_text(event):
         if text.isdigit():
             state["weight"] = text
             reply = "現在、治療中または通院中の病気はありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "illness")
+            return send_yes_no(event.reply_token, "illness", "現在、治療中または通院中の病気はありますか？")
         else:
             reply = "体重は数字（kg）で入力してください。"
 
@@ -120,7 +119,7 @@ def handle_text(event):
         if text:
             state["illness_detail"] = text
             reply = "現在、おくすりを服用していますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "medication")
+            return send_yes_no(event.reply_token, "medication", "現在、おくすりを服用していますか？")
         else:
             reply = "病名または治療内容を入力してください。"
 
@@ -128,7 +127,7 @@ def handle_text(event):
         if text:
             state["medication_detail"] = text
             reply = "アレルギーはありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "allergy")
+            return send_yes_no(event.reply_token, "allergy", "アレルギーはありますか？")
         else:
             reply = "服用中のお薬の名前を入力してください。"
 
@@ -161,12 +160,12 @@ def handle_postback(event):
             reply = "病気の名称や治療内容を教えてください。"
         elif key == "illness" and value == "no":
             reply = "現在、おくすりを服用していますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "medication")
+            return send_yes_no(event.reply_token, "medication", "現在、おくすりを服用していますか？")
         elif key == "medication" and value == "yes":
             reply = "お薬の名前をすべてお伝えください。"
         elif key == "medication" and value == "no":
             reply = "アレルギーはありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "allergy")
+            return send_yes_no(event.reply_token, "allergy", "アレルギーはありますか？")
         elif key == "allergy" and value == "yes":
             reply = "アレルギー名を教えてください。"
         elif key == "allergy" and value == "no":
@@ -215,12 +214,12 @@ def send_buttons(reply_token, text, buttons):
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
 
-def send_yes_no(reply_token, key):
+def send_yes_no(reply_token, key, question_text):
     buttons = [
         {"label": "はい", "data": f"yesno_{key}_yes"},
         {"label": "いいえ", "data": f"yesno_{key}_no"}
     ]
-    send_buttons(reply_token, f"{key.capitalize()}についてお答えください。", buttons)
+    send_buttons(reply_token, question_text, buttons)
 
 def show_confirmation(reply_token, state):
     summary = "\n".join([f"{k}: {v}" for k, v in state.items() if k != "age"])
