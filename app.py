@@ -8,35 +8,162 @@ from linebot.models import (
 import requests
 import os
 import json
+from datetime import datetime
 
 app = Flask(__name__)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ユーザーごとの状態保持
 user_states = {}
 
-# アンケート質問
-questions = [
-    {"question": "今の体調は？", "options": ["良い", "悪い", "わからない"]},
-    {"question": "咳は出ますか？", "options": ["はい", "いいえ"]},
-    {"question": "熱はありますか？", "options": ["高熱", "微熱", "平熱"]}
-]
+# 質問の順序管理
+def get_next_question(state):
+    steps = [
+        "prefecture", "name", "phone", "birthday",
+        "gender", "height", "weight", "illness", "illness_detail",
+        "medication", "medication_detail", "allergy", "allergy_detail",
+        "confirm_answers", "confirm_self"
+    ]
+    for step in steps:
+        if step not in state:
+            return step
+    return None
 
-# Flex Message 生成
-def create_question_bubble(index):
-    q = questions[index]
-    return {
+# 年齢計算
+def calculate_age(birthdate_str):
+    try:
+        birthdate = datetime.strptime(birthdate_str, "%Y/%m/%d")
+        today = datetime.today()
+        age = today.year - birthdate.year - ((today.month, today.day) < (birthdate.month, birthdate.day))
+        return age
+    except:
+        return None
+
+# メッセージ受信
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers["X-Line-Signature"]
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return "OK"
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text(event):
+    user_id = event.source.user_id
+    text = event.message.text.strip()
+    state = user_states.setdefault(user_id, {})
+
+    step = get_next_question(state)
+
+    if text.lower() in ["こんにちは", "おはよう", "こんばんは"]:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="こんにちは！症状チェックを始めます。まず、お住まいの都道府県を教えてください。"))
+        return
+
+    # ステップ別処理
+    if step == "prefecture":
+        state["prefecture"] = text
+        reply = "保険証と同じ漢字のフルネームでお名前を教えてください。"
+
+    elif step == "name":
+        state["name"] = text
+        reply = "電話番号をハイフンなしで入力してください。"
+
+    elif step == "phone":
+        state["phone"] = text
+        reply = "生年月日を yyyy/mm/dd の形式で入力してください。"
+
+    elif step == "birthday":
+        age = calculate_age(text)
+        if age is None:
+            reply = "正しい生年月日形式（yyyy/mm/dd）で入力してください。"
+        else:
+            state["birthday"] = text
+            state["age"] = age
+            reply = f"確認：あなたの満年齢は {age} 歳です。\n次に、性別を教えてください。"
+            buttons = [
+                {"label": "女", "data": "gender_female"},
+                {"label": "男", "data": "gender_male"}
+            ]
+            send_buttons(event.reply_token, "性別を選択してください。", buttons)
+            return
+
+    elif step == "illness_detail":
+        state["illness_detail"] = text
+        reply = "現在、おくすりを服用していますか？（はい／いいえ）"
+        return send_yes_no(event.reply_token, "medication")
+
+    elif step == "medication_detail":
+        state["medication_detail"] = text
+        reply = "アレルギーはありますか？（はい／いいえ）"
+        return send_yes_no(event.reply_token, "allergy")
+
+    elif step == "allergy_detail":
+        state["allergy_detail"] = text
+        return show_confirmation(event.reply_token, state)
+
+    else:
+        reply = "「こんにちは」から始めてください。"
+
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    user_id = event.source.user_id
+    state = user_states.setdefault(user_id, {})
+    data = event.postback.data
+
+    if data.startswith("gender_"):
+        state["gender"] = "女" if data == "gender_female" else "男"
+        reply = "身長を数字（cm）で入力してください。"
+
+    elif data.startswith("yesno_"):
+        key, value = data[7:].split("_")  # yesno_illness_yes
+        state[key] = value
+        if key == "illness" and value == "yes":
+            reply = "病気の名称や治療内容を教えてください。"
+        elif key == "illness" and value == "no":
+            reply = "現在、おくすりを服用していますか？（はい／いいえ）"
+            return send_yes_no(event.reply_token, "medication")
+        elif key == "medication" and value == "yes":
+            reply = "お薬の名前をすべてお伝えください。"
+        elif key == "medication" and value == "no":
+            reply = "アレルギーはありますか？（はい／いいえ）"
+            return send_yes_no(event.reply_token, "allergy")
+        elif key == "allergy" and value == "yes":
+            reply = "アレルギー名を教えてください。"
+        elif key == "allergy" and value == "no":
+            return show_confirmation(event.reply_token, state)
+
+    elif data == "confirm_ok":
+        reply = "問診票に記入したのはご本人さまですか？\n（ご本人以外は申し込みできません）"
+        buttons = [{"label": "はい。承知しました", "data": "self_confirmed"}]
+        return send_buttons(event.reply_token, reply, buttons)
+
+    elif data == "self_confirmed":
+        reply = "✅ ご回答ありがとうございました。"
+        del user_states[user_id]
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+        return
+
+    else:
+        reply = "次の入力をお願いします。"
+
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+def send_buttons(reply_token, text, buttons):
+    contents = {
         "type": "bubble",
         "body": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": f"Q{index+1}. {q['question']}", "wrap": True, "weight": "bold", "size": "md"},
+                {"type": "text", "text": text, "wrap": True, "weight": "bold", "size": "md"},
                 *[
                     {
                         "type": "button",
@@ -44,120 +171,30 @@ def create_question_bubble(index):
                         "margin": "sm",
                         "action": {
                             "type": "postback",
-                            "label": option,
-                            "data": json.dumps({"index": index, "answer": option}),
-                            "displayText": option
+                            "label": b["label"],
+                            "data": b["data"],
+                            "displayText": b["label"]
                         }
-                    } for option in q["options"]
+                    } for b in buttons
                 ]
             ]
         }
     }
+    message = FlexSendMessage(alt_text=text, contents=contents)
+    line_bot_api.reply_message(reply_token, message)
 
-# 天気情報取得
-def get_weather_forecast():
-    api_key = os.getenv("OPENWEATHER_API_KEY")
-    if not api_key:
-        return None, None, None
+def send_yes_no(reply_token, key):
+    buttons = [
+        {"label": "はい", "data": f"yesno_{key}_yes"},
+        {"label": "いいえ", "data": f"yesno_{key}_no"}
+    ]
+    send_buttons(reply_token, f"{key.capitalize()}についてお答えください。", buttons)
 
-    city = "Tokyo,jp"
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&lang=ja&units=metric"
-
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print("DEBUG: Request failed:", e)
-        return None, None, None
-
-    data = response.json()
-    weather = data["weather"][0]["description"]
-    temp_max = data["main"]["temp_max"]
-    temp_min = data["main"]["temp_min"]
-    return weather, temp_max, temp_min
-
-# Webhook受信
-@app.route("/callback", methods=["POST"])
-def callback():
-    signature = request.headers["X-Line-Signature"]
-    body = request.get_data(as_text=True)
-
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-
-    return "OK"
-
-# テキストメッセージ処理
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    user_id = event.source.user_id
-    text = event.message.text.strip()
-
-    greetings = ["こんにちは", "こんにちわ", "おはよう", "おはようございます", "こんばんわ", "こんばんは"]
-
-    if "症状チェック" in text:
-        user_states[user_id] = {"answers": [], "step": 0}
-        question = create_question_bubble(0)
-        message = FlexSendMessage(alt_text="症状チェック Q1", contents=question)
-        line_bot_api.reply_message(event.reply_token, message)
-        return
-
-    elif any(greet in text for greet in greetings):
-        try:
-            profile = line_bot_api.get_profile(user_id)
-            display_name = profile.display_name
-        except Exception as e:
-            print("DEBUG: プロフィール取得に失敗:", e)
-            display_name = "お客さま"
-
-        weather, temp_max, temp_min = get_weather_forecast()
-        print("DEBUG:", weather, temp_max, temp_min)
-
-        if weather:
-            reply_text = (
-                f"{text}、{display_name}さん。\n"
-                f"東京MITクリニック付近の天気は「{weather}」です。\n"
-                f"最高気温は {temp_max}℃、最低気温は {temp_min}℃ です。"
-            )
-        else:
-            reply_text = f"{display_name}さん、天気情報の取得に失敗しました。"
-
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="「症状チェック」またはご挨拶を送ってください。")
-        )
-
-# アンケート回答処理
-@handler.add(PostbackEvent)
-def handle_postback(event):
-    user_id = event.source.user_id
-    data = json.loads(event.postback.data)
-    index = data["index"]
-    answer = data["answer"]
-
-    if user_id not in user_states:
-        user_states[user_id] = {"answers": [], "step": 0}
-
-    user_states[user_id]["answers"].append(f"Q{index+1}: {answer}")
-    user_states[user_id]["step"] += 1
-
-    step = user_states[user_id]["step"]
-
-    if step < len(questions):
-        next_question = create_question_bubble(step)
-        message = FlexSendMessage(alt_text=f"症状チェック Q{step+1}", contents=next_question)
-        line_bot_api.reply_message(event.reply_token, message)
-    else:
-        result = "\n".join(user_states[user_id]["answers"])
-        result += "\n\n✅ オンライン診療はこちらから:\nhttps://your-clinic-url.com/"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=result))
-        del user_states[user_id]  # 回答リセット
+def show_confirmation(reply_token, state):
+    summary = "\n".join([f"{k}: {v}" for k, v in state.items() if k != "age"])
+    text = f"以下の内容で間違いないですか？\n\n{summary}\n\n□ はい。正しく記入したことを確認しました"
+    buttons = [{"label": "はい。確認しました", "data": "confirm_ok"}]
+    send_buttons(reply_token, text, buttons)
 
 if __name__ == "__main__":
     app.run()
