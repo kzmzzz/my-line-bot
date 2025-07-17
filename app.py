@@ -23,8 +23,7 @@ completed_users = set()
 def get_next_question(state):
     steps = [
         "prefecture", "name", "phone", "birthday",
-        "gender", "height", "weight", "illness",
-        "confirm_answers", "confirm_self"
+        "gender", "height", "weight"
     ]
     for step in steps:
         if step not in state:
@@ -113,7 +112,9 @@ def handle_text(event):
     elif step == "weight":
         if text.isdigit():
             state["weight"] = text
-            return send_yes_no(event.reply_token, "illness")
+            reply = "✅ ご回答ありがとうございました。"
+            completed_users.add(user_id)
+            del user_states[user_id]
         else:
             reply = "体重は数字（kg）で入力してください。"
 
@@ -135,24 +136,6 @@ def handle_postback(event):
     if data.startswith("gender_"):
         state["gender"] = "女" if data == "gender_female" else "男"
         reply = "身長を数字（cm）で入力してください。"
-
-    elif data.startswith("yesno_"):
-        key, value = data[7:].split("_")
-        state[key] = value
-        if key == "illness":
-            return show_confirmation(event.reply_token, state)
-
-    elif data == "confirm_ok":
-        reply = "問診票に記入したのはご本人さまですか？\n（ご本人以外は申し込みできません）"
-        buttons = [{"label": "はい。承知しました", "data": "self_confirmed"}]
-        return send_buttons(event.reply_token, reply, buttons)
-
-    elif data == "self_confirmed":
-        reply = "✅ ご回答ありがとうございました。"
-        completed_users.add(user_id)
-        del user_states[user_id]
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
-        return
 
     else:
         reply = "次の入力をお願いします。"
@@ -185,23 +168,6 @@ def send_buttons(reply_token, text, buttons):
     }
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
-
-def send_yes_no(reply_token, key):
-    prompts = {
-        "illness": "現在、治療中または通院中の病気はありますか？"
-    }
-    text = prompts.get(key, f"{key}についてお答えください。")
-    buttons = [
-        {"label": "はい", "data": f"yesno_{key}_yes"},
-        {"label": "いいえ", "data": f"yesno_{key}_no"}
-    ]
-    send_buttons(reply_token, text, buttons)
-
-def show_confirmation(reply_token, state):
-    summary = "\n".join([f"{k}: {v}" for k, v in state.items() if k != "age"])
-    text = f"以下の内容で間違いないですか？\n\n{summary}\n\n□ はい。正しく記入したことを確認しました"
-    buttons = [{"label": "はい。確認しました", "data": "confirm_ok"}]
-    send_buttons(reply_token, text, buttons)
 
 if __name__ == "__main__":
     app.run()
