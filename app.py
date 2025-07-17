@@ -136,7 +136,6 @@ def handle_postback(event):
     if data.startswith("gender_"):
         state["gender"] = "女" if data == "gender_female" else "男"
         reply = "身長を数字（cm）で入力してください。"
-
     else:
         reply = "次の入力をお願いします。"
 
