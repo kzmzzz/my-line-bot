@@ -22,8 +22,8 @@ completed_users = set()
 
 def get_next_question(state):
     steps = [
-        "prefecture", "name", "phone", "birthday",
-        "gender", "height", "weight"
+        "都道府県", "お名前", "電話番号", "生年月日",
+        "性別", "身長", "体重"
     ]
     for step in steps:
         if step not in state:
@@ -67,34 +67,34 @@ def handle_text(event):
 
     step = get_next_question(state)
 
-    if step == "prefecture":
+    if step == "都道府県":
         if text:
-            state["prefecture"] = text
+            state["都道府県"] = text
             reply = "保険証と同じ漢字のフルネームでお名前を教えてください。"
         else:
             reply = "都道府県名を入力してください。"
 
-    elif step == "name":
+    elif step == "お名前":
         if text:
-            state["name"] = text
+            state["お名前"] = text
             reply = "電話番号をハイフンなしで入力してください。"
         else:
             reply = "お名前を入力してください。"
 
-    elif step == "phone":
+    elif step == "電話番号":
         if text.isdigit() and len(text) == 11:
-            state["phone"] = text
+            state["電話番号"] = text
             reply = "生年月日を yyyy/mm/dd の形式で入力してください。"
         else:
             reply = "電話番号は11桁の数字で入力してください。例：09012345678"
 
-    elif step == "birthday":
+    elif step == "生年月日":
         age = calculate_age(text)
         if age is None:
             reply = "正しい生年月日形式（yyyy/mm/dd）で入力してください。"
         else:
-            state["birthday"] = text
-            state["age"] = age
+            state["生年月日"] = text
+            state["年齢"] = age
             buttons = [
                 {"label": "女", "data": "gender_female"},
                 {"label": "男", "data": "gender_male"}
@@ -102,17 +102,35 @@ def handle_text(event):
             send_buttons(event.reply_token, "性別を選択してください。", buttons)
             return
 
-    elif step == "height":
+    elif step == "身長":
         if text.isdigit():
-            state["height"] = text
+            state["身長"] = text
             reply = "体重を数字（kg）で入力してください。"
         else:
             reply = "身長は数字（cm）で入力してください。"
 
-    elif step == "weight":
+    elif step == "体重":
         if text.isdigit():
-            state["weight"] = text
-            reply = "✅ ご回答ありがとうございました。"
+            state["体重"] = text
+            summary_lines = []
+            for k, v in state.items():
+                if k == "年齢":
+                    continue
+                elif k == "生年月日":
+                    summary_lines.append(f"{k}: {v}（満{state['年齢']}歳）")
+                else:
+                    summary_lines.append(f"{k}: {v}")
+            summary = "\n".join(summary_lines)
+            followup = (
+                "(⚫分後に問診結果を送らせていただきます。)\n\n"
+                "では早速、ECサイトストアーズURLをクリックして商品をご選択下さい。\n\n"
+                "https://70vhnafm3wj1pjo0yitq.stores.jp\n\n"
+                "代金のお支払い手続きを確認後、（LINEビデオ通話による）診察日の候補をいくつかお送りいたしますので、"
+                "ご都合のよい日時をお選びください。\n"
+                "なお、オンライン診察では法令により「身分証明証による本人確認」が必要となります。\n"
+                "保険証、マイナ保険証、マイナンバーカード、運転免許証、パスポートのうち、いずれか１つをお手元にご用意ください。"
+            )
+            reply = f"以下の内容で承りました：\n\n{summary}\n\n✅ ご回答ありがとうございました。\n\n{followup}"
             completed_users.add(user_id)
             del user_states[user_id]
         else:
@@ -134,7 +152,7 @@ def handle_postback(event):
         return
 
     if data.startswith("gender_"):
-        state["gender"] = "女" if data == "gender_female" else "男"
+        state["性別"] = "女" if data == "gender_female" else "男"
         reply = "身長を数字（cm）で入力してください。"
     else:
         reply = "次の入力をお願いします。"
