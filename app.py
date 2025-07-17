@@ -18,6 +18,7 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 user_states = {}
+completed_users = set()  # ← ここで完了ユーザーを記録
 
 def get_next_question(state):
     steps = [
@@ -56,7 +57,11 @@ def handle_text(event):
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
-    if text == "症状チェック":
+    if user_id in completed_users:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでに問診にご回答いただいています。ありがとうございました。"))
+        return
+
+    if text == "問診":
         user_states[user_id] = {}
         reply = "お住まいの都道府県を教えてください。"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
@@ -92,7 +97,6 @@ def handle_text(event):
         else:
             state["birthday"] = text
             state["age"] = age
-            reply = f"確認：あなたの満年齢は {age} 歳です。\n次に、性別を教えてください。"
             buttons = [
                 {"label": "女", "data": "gender_female"},
                 {"label": "男", "data": "gender_male"}
@@ -110,24 +114,21 @@ def handle_text(event):
     elif step == "weight":
         if text.isdigit():
             state["weight"] = text
-            reply = "現在、治療中または通院中の病気はありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "illness", "現在、治療中または通院中の病気はありますか？")
+            return send_yes_no(event.reply_token, "illness")
         else:
             reply = "体重は数字（kg）で入力してください。"
 
     elif step == "illness_detail":
         if text:
             state["illness_detail"] = text
-            reply = "現在、おくすりを服用していますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "medication", "現在、おくすりを服用していますか？")
+            return send_yes_no(event.reply_token, "medication")
         else:
             reply = "病名または治療内容を入力してください。"
 
     elif step == "medication_detail":
         if text:
             state["medication_detail"] = text
-            reply = "アレルギーはありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "allergy", "アレルギーはありますか？")
+            return send_yes_no(event.reply_token, "allergy")
         else:
             reply = "服用中のお薬の名前を入力してください。"
 
@@ -149,6 +150,10 @@ def handle_postback(event):
     state = user_states.setdefault(user_id, {})
     data = event.postback.data
 
+    if user_id in completed_users:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでに問診にご回答いただいています。"))
+        return
+
     if data.startswith("gender_"):
         state["gender"] = "女" if data == "gender_female" else "男"
         reply = "身長を数字（cm）で入力してください。"
@@ -159,13 +164,11 @@ def handle_postback(event):
         if key == "illness" and value == "yes":
             reply = "病気の名称や治療内容を教えてください。"
         elif key == "illness" and value == "no":
-            reply = "現在、おくすりを服用していますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "medication", "現在、おくすりを服用していますか？")
+            return send_yes_no(event.reply_token, "medication")
         elif key == "medication" and value == "yes":
             reply = "お薬の名前をすべてお伝えください。"
         elif key == "medication" and value == "no":
-            reply = "アレルギーはありますか？（はい／いいえ）"
-            return send_yes_no(event.reply_token, "allergy", "アレルギーはありますか？")
+            return send_yes_no(event.reply_token, "allergy")
         elif key == "allergy" and value == "yes":
             reply = "アレルギー名を教えてください。"
         elif key == "allergy" and value == "no":
@@ -178,6 +181,7 @@ def handle_postback(event):
 
     elif data == "self_confirmed":
         reply = "✅ ご回答ありがとうございました。"
+        completed_users.add(user_id)
         del user_states[user_id]
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
         return
@@ -214,12 +218,12 @@ def send_buttons(reply_token, text, buttons):
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
 
-def send_yes_no(reply_token, key, question_text):
+def send_yes_no(reply_token, key):
     buttons = [
         {"label": "はい", "data": f"yesno_{key}_yes"},
         {"label": "いいえ", "data": f"yesno_{key}_no"}
     ]
-    send_buttons(reply_token, question_text, buttons)
+    send_buttons(reply_token, f"{key}についてお答えください。", buttons)
 
 def show_confirmation(reply_token, state):
     summary = "\n".join([f"{k}: {v}" for k, v in state.items() if k != "age"])
