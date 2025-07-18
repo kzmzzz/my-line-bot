@@ -231,7 +231,7 @@ def handle_text(event):
         return
 
     # デフォルト応答
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。　"))
 
 
 @handler.add(PostbackEvent)
