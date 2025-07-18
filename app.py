@@ -64,7 +64,6 @@ def start_registration(user_id, reply_token):
     )
     line_bot_api.reply_message(reply_token, welcome)
 
-
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -75,18 +74,33 @@ def callback():
         abort(400)
     return "OK"
 
+# 管理用: メモリクリア用エンドポイント（POST）
+@app.route("/admin/reset", methods=["POST"])
+def admin_reset():
+    user_states.clear()
+    completed_users.clear()
+    return "All states reset", 200
 
 @handler.add(FollowEvent)
 def handle_follow(event):
     user_id = event.source.user_id
     start_registration(user_id, event.reply_token)
 
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
+
+    # テスト用リセットコマンド
+    if text == "リセット":
+        user_states.pop(user_id, None)
+        completed_users.discard(user_id)
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="テスト用に状態をリセットしました。")
+        )
+        return
 
     # 「新規登録」テキストでフォロー動作を擬似トリガー
     if text == "新規登録":
@@ -187,7 +201,6 @@ def handle_text(event):
     elif step == "体重":
         if text.isdigit():
             state["体重"] = text
-            # 内容確認メッセージ
             summary_lines = []
             for k, v in state.items():
                 if k == "年齢":
@@ -223,7 +236,6 @@ def handle_text(event):
             TextSendMessage(text="次の入力をお願いします。")
         )
 
-
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
@@ -241,42 +253,4 @@ def handle_postback(event):
         state["性別"] = "女" if data == "gender_female" else "男"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="身長を数字（cm）で入力してください。")
-        )
-    else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="次の入力をお願いします。")
-        )
-
-
-def send_buttons(reply_token, text, buttons):
-    contents = {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": text, "wrap": True, "weight": "bold", "size": "md"},
-                *[
-                    {
-                        "type": "button",
-                        "style": "primary",
-                        "margin": "sm",
-                        "action": {
-                            "type": "postback",
-                            "label": b["label"],
-                            "data": b["data"],
-                            "displayText": b["label"]
-                        }
-                    } for b in buttons
-                ]
-            ]
-        }
-    }
-    message = FlexSendMessage(alt_text=text, contents=contents)
-    line_bot_api.reply_message(reply_token, message)
-
-
-if __name__ == "__main__":
-    app.run()
+            TextSendMessage(text="身長を数字（cm）で入力してくだ\
