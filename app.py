@@ -4,7 +4,8 @@ def handle_text(event):
     text = event.message.text.strip()
 
     # 強制的にステート初期化してから開始するように
-    if text == "新規登録":
+    # どんな文言でも新規登録として受け付ける
+    if True:
         user_states.pop(user_id, None)
         completed_users.discard(user_id)
         start_registration(user_id, event.reply_token)
