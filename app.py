@@ -6,14 +6,16 @@ from linebot.models import (
     PostbackEvent, FlexSendMessage, FollowEvent
 )
 import os
-import json
 from datetime import datetime
 from threading import Timer
 
 app = Flask(__name__)
 
+# 環境変数から取得 or デフォルト BOT 名を設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")  # 例: 東京MITクリニック
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -55,14 +57,33 @@ def calculate_age(birthdate_str):
 
 
 def start_registration(user_id, reply_token):
-    # state の初期化と既存完了フラグの解除
+    # メモリ初期化
     user_states[user_id] = {}
     completed_users.discard(user_id)
-    # ウェルカムメッセージ送信
-    welcome = TextSendMessage(
-        text="新規登録ありがとうございます！\nまずはお住まいの都道府県を教えてください。"
+
+    # プロフィール取得
+    profile = line_bot_api.get_profile(user_id)
+    nickname = profile.display_name
+
+    # あいさつメッセージ全文
+    greeting = (
+        f"{nickname}様\n\n"
+        f"{ACCOUNT_NAME}でございます。\n"
+        "このたびはご登録くださり、誠にありがとうございます。\n\n"
+        "では『GHPR-2（セルアクチン）』の処方を希望される方は、\n"
+        "LINEによるオンライン診療（問診）にお進みください。\n\n"
+        "今後の診察の流れ\n"
+        "１ 簡単な問診　→　2. 商品のご選択　→　3. LINEビデオオンライン診療（国家資格医師）→　ご自宅へ配送（送料無料です）\n\n"
+        "ご不明な点がございましたらお気軽にお問い合わせください"
     )
-    line_bot_api.reply_message(reply_token, welcome)
+
+    # あいさつ→都道府県質問をまとめて送信
+    messages = [
+        TextSendMessage(text=greeting),
+        TextSendMessage(text="お住まいの都道府県を教えてください。")
+    ]
+    line_bot_api.reply_message(reply_token, messages)
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -74,17 +95,19 @@ def callback():
         abort(400)
     return "OK"
 
-# 管理用: メモリクリア用エンドポイント（POST）
+
+# 管理者用: 全ユーザー状態をリセットするエンドポイント
 @app.route("/admin/reset", methods=["POST"])
 def admin_reset():
     user_states.clear()
     completed_users.clear()
     return "All states reset", 200
 
+
 @handler.add(FollowEvent)
 def handle_follow(event):
-    user_id = event.source.user_id
-    start_registration(user_id, event.reply_token)
+    start_registration(event.source.user_id, event.reply_token)
+
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
@@ -102,11 +125,12 @@ def handle_text(event):
         )
         return
 
-    # 「新規登録」テキストでフォロー動作を擬似トリガー
-    if text == "新規登録":
+    # 「新規登録」または「問診」で登録開始
+    if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         return
 
+    # 完了済みユーザーの二重回答防止
     if user_id in completed_users:
         line_bot_api.reply_message(
             event.reply_token,
@@ -114,18 +138,10 @@ def handle_text(event):
         )
         return
 
-    if text == "問診":
-        start_registration(user_id, event.reply_token)
-        return
-
     step = get_next_question(state)
 
     if step == "都道府県":
-        match = None
-        for p in PREFECTURES:
-            if text == p or p.startswith(text):
-                match = p
-                break
+        match = next((p for p in PREFECTURES if text == p or p.startswith(text)), None)
         if match:
             state["都道府県"] = match
             line_bot_api.reply_message(
@@ -201,6 +217,7 @@ def handle_text(event):
     elif step == "体重":
         if text.isdigit():
             state["体重"] = text
+            # 内容確認
             summary_lines = []
             for k, v in state.items():
                 if k == "年齢":
@@ -230,11 +247,12 @@ def handle_text(event):
             )
         return
 
-    else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="次の入力をお願いします。")
-        )
+    # 想定外の入力
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="次の入力をお願いします。")
+    )
+
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
@@ -253,4 +271,42 @@ def handle_postback(event):
         state["性別"] = "女" if data == "gender_female" else "男"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="身長を数字（cm）で入力してくだ\
+            TextSendMessage(text="身長を数字（cm）で入力してください。")
+        )
+    else:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="次の入力をお願いします。")
+        )
+
+
+def send_buttons(reply_token, text, buttons):
+    contents = {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": text, "wrap": True, "weight": "bold", "size": "md"},
+                *[
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "margin": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": b["label"],
+                            "data": b["data"],
+                            "displayText": b["label"]
+                        }
+                    } for b in buttons
+                ]
+            ]
+        }
+    }
+    message = FlexSendMessage(alt_text=text, contents=contents)
+    line_bot_api.reply_message(reply_token, message)
+
+
+if __name__ == "__main__":
+    app.run()
