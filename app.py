@@ -73,7 +73,6 @@ def start_registration(user_id, reply_token):
         "１ 簡単な問診 → 2. 商品のご選択 → 3. LINEビデオオンライン診療（国家資格医師）→ ご自宅へ配送（送料無料です）\n\n"
         "ご不明な点がございましたらお気軽にお問い合わせください"
     )
-    # あいさつのみ返信
     line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
 
 
@@ -125,7 +124,6 @@ def handle_text(event):
     # 新規登録／問診開始
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
-        # 続けて都道府県質問
         line_bot_api.push_message(user_id, TextSendMessage(text="お住まいの都道府県を教えてください。"))
         return
 
@@ -180,14 +178,56 @@ def handle_text(event):
         if text.isdigit():
             state["体重"] = text
             summary_lines = []
-            for k,v in state.items():
+            for k, v in state.items():
                 if k == "年齢": continue
                 if k == "生年月日": summary_lines.append(f"{k}: {v}（満{state['年齢']}歳）")
                 else: summary_lines.append(f"{k}: {v}")
             summary = "\n".join(summary_lines)
             followup = (
-                "(5分後に自動で結果をお送りします)\n\n"
+                "(1分後に自動で結果をお送りします)\n\n"
                 "続いて STORES の商品ページから選択ください。"
             )
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"以下の内容で承りました:\n{summary}\n\n{followup}"))
+            # タイマーを1分(60秒)に設定し、文言を変更
             Timer(60, lambda uid=user_id: line_bot_api.push_message(uid, TextSendMessage(text="お待たせしました。問診結果をご案内します。"))).start()
+            completed_users.add(user_id)
+            user_states.pop(user_id, None)
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重は数字（kg）で入力してください。"))
+        return
+
+    # デフォルト応答
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
+
+
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    user_id = event.source.user_id
+    state = user_states.setdefault(user_id, {})
+    data = event.postback.data
+
+    if user_id in completed_users:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでにご回答ありがとうございました。"))
+        return
+
+    if data.startswith("gender_"):
+        state["性別"] = "女" if data == "gender_female" else "男"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長を数字（cm）で入力してください。"))
+    else:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
+
+
+def send_buttons(reply_token, text, buttons):
+    contents = {
+        "type":"bubble",
+        "body":{"type":"box","layout":"vertical","contents":[
+            {"type":"text","text":text,"wrap":True,"weight":"bold","size":"md"},
+            *[{"type":"button","style":"primary","margin":"sm","action":{"type":"postback","label":b['label'],"data":b['data'],"displayText":b['label']}} for b in buttons]
+        ]}
+    }
+    message = FlexSendMessage(alt_text=text, contents=contents)
+    line_bot_api.reply_message(reply_token, message)
+
+
+if __name__ == "__main__":
+    app.run()
