@@ -202,3 +202,6 @@ def handle_text(event):
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重を数字で入力してください。"))
         return
+
+
+
