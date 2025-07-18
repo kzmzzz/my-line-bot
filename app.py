@@ -144,14 +144,14 @@ def handle_text(event):
         return
     if text in ("新規登録","問診"):
         start_registration(user_id, event.reply_token)
-        line_bot_api.push_message(user_id, TextSendMessage(text="お住まいの都道府県を教えてください。"))
+        line_bot_api.push_message(user_id, TextSendMessage(text="お住まいの都道府県を入力してください。"))
         return
     step = get_next_question(state)
     if step == "都道府県":
         match = next((p for p in PREFECTURES if text==p or p.startswith(text)), None)
         if match:
             state["都道府県"] = match
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="保険証と同じ漢字のフル네임でお名前を教えてください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="保険証と同じお名前を入力してください。"))
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="47都道府県から正しい都道府県名を入力してください。"))
         return
