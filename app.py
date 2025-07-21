@@ -11,16 +11,14 @@ import smtplib
 from email.message import EmailMessage
 from dotenv import load_dotenv
 
-load_dotenv()  # ← ここで .env を読み込む
+load_dotenv()
 
 app = Flask(__name__)
 
-# LINEチャンネル設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
 
-# SMTP設定（さくら）
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
@@ -113,13 +111,18 @@ def handle_text(event):
         completed_users.discard(user_id)
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
-    if user_id in completed_users and text in ("新規登録","問診"):
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでに問診にご回答いただいています。"))
-        return
-    if user_id in completed_users:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
-        return
-    if text in ("新規登録","問診"):
+
+    # ↓↓↓ 一時的に再回答制限をOFFにするためコメントアウト ↓↓↓
+    # if user_id in completed_users and text in ("新規登録","問診"):
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでに問診にご回答いただいています。"))
+    #     return
+
+    # if user_id in completed_users:
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
+    #     return
+    # ↑↑↑ コメントアウトここまで ↑↑↑
+
+    if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         line_bot_api.push_message(user_id, TextSendMessage(text="お名前を教えてください。"))
         return
@@ -166,9 +169,11 @@ def handle_postback(event):
     state = user_states.setdefault(user_id, {})
     data = event.postback.data
 
-    if user_id in completed_users:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
-        return
+    # ↓↓↓ 一時的に再回答制限をOFFにするためコメントアウト ↓↓↓
+    # if user_id in completed_users:
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
+    #     return
+    # ↑↑↑ コメントアウトここまで ↑↑↑
 
     if data.startswith("alcohol_"):
         state["アルコール"] = "はい" if data == "alcohol_yes" else "いいえ"
@@ -207,12 +212,27 @@ def finalize_response(event, user_id, state):
 
 def send_buttons(reply_token, text, buttons):
     contents = {
-        "type":"bubble",
-        "body":{"type":"box","layout":"vertical","contents":[
-            {"type":"text","text":text,"wrap":True,"weight":"bold","size":"md"},
-            *[{"type":"button","style":"primary","margin":"sm",
-                "action":{"type":"postback","label":b['label'],"data":b['data'],"displayText":b['label']}} for b in buttons]
-        ]}
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": text, "wrap": True, "weight": "bold", "size": "md"},
+                *[
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "margin": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": b["label"],
+                            "data": b["data"],
+                            "displayText": b["label"]
+                        }
+                    } for b in buttons
+                ]
+            ]
+        }
     }
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
