@@ -7,7 +7,7 @@ backports.weakref==1.0.post1
 blinker==1.9.0
 brotlipy==0.7.0
 click==8.2.1
-clyent==1.2.2
+clyent==1.2.1
 conda-repo-cli==1.0.41
 conda-verify==3.4.2
 Deprecated==1.2.18
