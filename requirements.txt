@@ -8,7 +8,6 @@ blinker==1.9.0
 brotlipy==0.7.0
 click==8.2.1
 clyent==1.2.1
-conda-verify==3.4.2
 Deprecated==1.2.18
 et-xmlfile==1.1.0
 Flask==3.1.1
