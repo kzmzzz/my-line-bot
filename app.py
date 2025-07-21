@@ -6,62 +6,41 @@ from linebot.models import (
     PostbackEvent, FlexSendMessage, FollowEvent
 )
 import os
-from datetime import datetime
 from threading import Timer
 import smtplib
 from email.message import EmailMessage
+from dotenv import load_dotenv
+
+load_dotenv()  # ← ここで .env を読み込む
 
 app = Flask(__name__)
 
 # LINEチャンネル設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-# BOT名（表示用）
 ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
-# SMTP設定（さくらインターネット用デフォルト）
+
+# SMTP設定（さくら）
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-# SMTP_USER と SMTP_PASS はさくらのメールアカウントを環境変数にセットしてください
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
 SMTP_PASS = os.getenv("SMTP_PASS", "hadfi0609")
-# 差出人アドレス（適宜変更）
 SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# 47都道府県リスト
-PREFECTURES = [
-    "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県",
-    "茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
-    "新潟県","富山県","石川県","福井県","山梨県","長野県",
-    "岐阜県","静岡県","愛知県","三重県",
-    "滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県",
-    "鳥取県","島根県","岡山県","広島県","山口県",
-    "徳島県","香川県","愛媛県","高知県",
-    "福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"
-]
-
-# メモリ管理
 user_states = {}
 completed_users = set()
 
 def get_next_question(state):
-    for step in ["都道府県","お名前","電話番号","生年月日","性別","身長","体重"]:
+    for step in ["お名前", "電話番号", "メールアドレス",
+                 "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気"]:
         if step not in state:
             return step
+    if state.get("その他病気") == "はい" and "病名" not in state:
+        return "病名"
     return None
-
-def calculate_age(birthdate_str):
-    try:
-        y, m, d = map(int, birthdate_str.split('/'))
-        if y < 1900:
-            return None
-        bd = datetime(y, m, d)
-        today = datetime.today()
-        return today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
-    except:
-        return None
 
 def send_notification_email(user_id, nickname):
     msg = EmailMessage()
@@ -86,12 +65,16 @@ def start_registration(user_id, reply_token):
     greeting = (
         f"{nickname}様\n\n"
         f"{ACCOUNT_NAME}でございます。\n"
-        "このたびはご登録くださり、誠にありがとうございます。\n\n"
-        "では『GHPR-2（セルアクチン）』の処方を希望される方は、\n"
-        "LINEによるオンライン診療（問診）にお進みください。\n\n"
-        "今後の診察の流れ\n"
-        "１ 簡単な問診 → 2. 商品のご選択 → 3. LINEビデオオンライン診療（国家資格医師）→ ご自宅へ配送（送料無料です）\n\n"
-        "ご不明な点がございましたらお気軽にお問い合わせください"
+        "このたびはご登録くださり、誠にありがとうございます。\n"
+        "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
+        "☆今後のオンライン診療の進め方\n\n"
+        "１．簡単な問診\n"
+        "　　　↓\n"
+        "２．お薬のご選択\n"
+        "　　　↓\n"
+        "３．LINEビデオ通話による診察\n"
+        "　　　↓\n"
+        "４．お薬をご自宅に発送"
     )
     line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
     try:
@@ -138,20 +121,11 @@ def handle_text(event):
         return
     if text in ("新規登録","問診"):
         start_registration(user_id, event.reply_token)
-        line_bot_api.push_message(user_id, TextSendMessage(text="お住まいの都道府県を教えてください。"))
+        line_bot_api.push_message(user_id, TextSendMessage(text="お名前を教えてください。"))
         return
 
     step = get_next_question(state)
-    if step == "都道府県":
-        match = next((p for p in PREFECTURES if text == p or p.startswith(text)), None)
-        if match:
-            state["都道府県"] = match
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="保険証と同じ漢字のフルネームでお名前を教えてください。"))
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="47都道府県から正しい都道府県名を入力してください。"))
-        return
-
-    elif step == "お名前":
+    if step == "お名前":
         if text:
             state["お名前"] = text
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号をハイフンなしで入力してください。"))
@@ -162,63 +136,28 @@ def handle_text(event):
     elif step == "電話番号":
         if text.isdigit() and len(text) == 11:
             state["電話番号"] = text
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生年月日を 2000/01/01 の形式で入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メールアドレスを入力してください。"))
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は11桁の数字で入力してください。（例:09012345678）"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は11桁の数字で入力してください。"))
         return
 
-    elif step == "生年月日":
-        age = calculate_age(text)
-        if age is None:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="日付が正しくありません。生年月日を 2000/01/01 の形式で正しく入力し直してください。"))
-            return
-        state["生年月日"] = text
-        state["年齢"] = age
-        buttons = [{"label":"女性","data":"gender_female"},{"label":"男性","data":"gender_male"}]
-        send_buttons(event.reply_token, "性別を選択してください。", buttons)
-        return
-
-    elif step == "身長":
-        if text.isdigit() and 120 <= int(text) <= 255:
-            state["身長"] = text
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重を数字（kg）で入力してください。"))
+    elif step == "メールアドレス":
+        if "@" in text and "." in text:
+            state["メールアドレス"] = text
+            buttons = [{"label":"はい","data":"alcohol_yes"},{"label":"いいえ","data":"alcohol_no"}]
+            send_buttons(event.reply_token, "アルコールを常習的に摂取していますか？", buttons)
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長は120〜255の範囲内で、それ以外は数値が間違っています。再度入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メールアドレスの形式が正しくありません。"))
         return
 
-    elif step == "体重":
-        if text.isdigit() and 35 <= int(text) <= 255:
-            state["体重"] = text
-            summary_lines = []
-            for k, v in state.items():
-                if k == "年齢":
-                    continue
-                if k == "生年月日":
-                    summary_lines.append(f"{k}: {v}（満{state['年齢']}歳）")
-                elif k == "お名前":
-                    summary_lines.append(f"{k}: {v}様")
-                elif k == "身長":
-                    summary_lines.append(f"{k}: {v}cm")
-                elif k == "体重":
-                    summary_lines.append(f"{k}: {v}kg")
-                else:
-                    summary_lines.append(f"{k}: {v}")
-            summary = "\n".join(summary_lines)
-            followup = (
-                "(1分後に自動で結果をお送りします)\n\n"
-                "では早速ECサイトストアーズURLをクリックして商品をご選択ください。\n\n"
-                "https://70vhnafm3wj1pjo0yitq.stores.jp"
-            )
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。内容をプッシュでお送りします。"))
-            line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}\n\n{followup}"))
-            Timer(60, lambda uid=user_id: line_bot_api.push_message(uid, TextSendMessage(text="お待たせしました。問診結果をご案内します。"))).start()
-            completed_users.add(user_id)
-            user_states.pop(user_id, None)
+    elif step == "病名":
+        if text:
+            state["病名"] = text
+            finalize_response(event, user_id, state)
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重は35〜255の範囲内で、それ以外は数値が間違っています。再度入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="病名を入力してください。"))
         return
 
-    # デフォルト応答
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
 
 @handler.add(PostbackEvent)
@@ -231,18 +170,48 @@ def handle_postback(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
         return
 
-    if data.startswith("gender_"):
-        state["性別"] = "女性" if data == "gender_female" else "男性"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長を数字（cm）で入力してください。"))
-    else:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
+    if data.startswith("alcohol_"):
+        state["アルコール"] = "はい" if data == "alcohol_yes" else "いいえ"
+        buttons = [{"label":"はい","data":"steroid_yes"},{"label":"いいえ","data":"steroid_no"}]
+        send_buttons(event.reply_token, "副腎皮質ホルモン剤を投与中ですか？", buttons)
+
+    elif data.startswith("steroid_"):
+        state["副腎皮質ホルモン剤"] = "はい" if data == "steroid_yes" else "いいえ"
+        buttons = [{"label":"はい","data":"cancer_yes"},{"label":"いいえ","data":"cancer_no"}]
+        send_buttons(event.reply_token, "がんにかかっていて治療中ですか？", buttons)
+
+    elif data.startswith("cancer_"):
+        state["がん"] = "はい" if data == "cancer_yes" else "いいえ"
+        buttons = [{"label":"はい","data":"diabetes_yes"},{"label":"いいえ","data":"diabetes_no"}]
+        send_buttons(event.reply_token, "糖尿病で治療中ですか？", buttons)
+
+    elif data.startswith("diabetes_"):
+        state["糖尿病"] = "はい" if data == "diabetes_yes" else "いいえ"
+        buttons = [{"label":"はい","data":"otherdisease_yes"},{"label":"いいえ","data":"otherdisease_no"}]
+        send_buttons(event.reply_token, "そのほか、なにか病気にかかっていますか？", buttons)
+
+    elif data.startswith("otherdisease_"):
+        state["その他病気"] = "はい" if data == "otherdisease_yes" else "いいえ"
+        if state["その他病気"] == "はい":
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="病名を教えてください。"))
+        else:
+            finalize_response(event, user_id, state)
+
+def finalize_response(event, user_id, state):
+    summary_lines = [f"{k}: {v}" for k, v in state.items()]
+    summary = "\n".join(summary_lines)
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。内容をプッシュでお送りします。"))
+    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
+    completed_users.add(user_id)
+    user_states.pop(user_id, None)
 
 def send_buttons(reply_token, text, buttons):
     contents = {
         "type":"bubble",
         "body":{"type":"box","layout":"vertical","contents":[
             {"type":"text","text":text,"wrap":True,"weight":"bold","size":"md"},
-            *[{"type":"button","style":"primary","margin":"sm","action":{"type":"postback","label":b['label'],"data":b['data'],"displayText":b['label']}} for b in buttons]
+            *[{"type":"button","style":"primary","margin":"sm",
+                "action":{"type":"postback","label":b['label'],"data":b['data'],"displayText":b['label']}} for b in buttons]
         ]}
     }
     message = FlexSendMessage(alt_text=text, contents=contents)
