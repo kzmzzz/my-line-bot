@@ -42,7 +42,7 @@ def get_next_question(state):
 def send_notification_email(user_id, nickname):
     msg = EmailMessage()
     msg['Subject'] = f"【新規登録通知】{nickname} 様"
-    msg['From'] = SMTP_FROM
+    msg['From'] = SMTP_USER
     msg['To'] = SMTP_FROM
     msg.set_content(
         f"LINE Botで新規登録がありました。\n"
@@ -64,13 +64,13 @@ def send_summary_email_to_admin_and_user(summary, user_id, user_email):
 
     msg_admin = EmailMessage()
     msg_admin['Subject'] = subject_admin
-    msg_admin['From'] = SMTP_FROM
+    msg_admin['From'] = SMTP_USER
     msg_admin['To'] = SMTP_FROM
     msg_admin.set_content(f"以下の内容で新規受付がありました。\n\nユーザーID: {user_id}\n\n{summary}")
 
     msg_user = EmailMessage()
     msg_user['Subject'] = subject_user
-    msg_user['From'] = SMTP_FROM
+    msg_user['From'] = SMTP_USER
     msg_user['To'] = user_email
     msg_user.set_content(
         f"{ACCOUNT_NAME}より\n\n"
@@ -103,7 +103,6 @@ def finalize_response(event, user_id, state):
 
     completed_users.add(user_id)
     user_states.pop(user_id, None)
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
@@ -240,7 +239,7 @@ def start_registration(user_id, reply_token):
     nickname = profile.display_name
     greeting = (
         f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0722.1400\n"
+        f"{ACCOUNT_NAME}でございます。ver0722.1415\n"
         "このたびはご登録くださり、誠にありがとうございます。\n"
         "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
         "☆今後のオンライン診療の進め方\n\n"
