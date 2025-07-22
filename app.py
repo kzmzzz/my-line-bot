@@ -104,7 +104,7 @@ def start_registration(user_id, reply_token):
     nickname = profile.display_name
     greeting = (
         f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0723.0830\n"
+        f"{ACCOUNT_NAME}でございます。ver0723.0850\n"
         "このたびはご登録くださり、誠にありがとうございます。\n"
         "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
         "☆今後のオンライン診療の進め方\n\n"
@@ -288,12 +288,12 @@ def finalize_response(event, user_id, state):
 
     # ユーザー宛にはECリンクあり
     followup_text = (
-        "\n\nご回答ありがとうございました。\n\n
-このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事させて頂きます。\n\n
-ご連絡までに１〜２日のお時間をいただきます事を、ご了承ください。\n\n
-        \n\nでは早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
-        "https://70vhnafm3wj1pjo0yitq.stores.jp"
-    )
+    "\n\nご回答ありがとうございました。\n\n"
+    "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事させて頂きます。\n\n"
+    "ご連絡までに１〜２日のお時間をいただきます事を、ご了承ください。\n\n"
+    "では早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
+    "https://70vhnafm3wj1pjo0yitq.stores.jp"
+)
     user_summary = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
