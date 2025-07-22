@@ -196,7 +196,7 @@ def finalize_response(event, user_id, state):
 
     # ✅ 1分後に結果案内
     Timer(60, lambda uid=user_id: line_bot_api.push_message(
-        uid, TextSendMessage(text="お待たせしました。問診結果をご案内します。"))
+        uid, TextSendMessage(text="お待たせしました。問診結果をご案内します。（以下文章待ち。現在テスト用に1分で問診結果を送信するようにしています。分数は変更可能です。）"))
     ).start()
 
     completed_users.add(user_id)
