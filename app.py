@@ -58,14 +58,16 @@ def send_summary_email_to_admin_and_user(summary, user_id, user_email):
     subject_admin = "東京MITクリニック妊活オンライン診療で受け付けました。"
     subject_user = "東京MITクリニック妊活オンライン診療で受け付けました。"
 
-    # 管理者宛
+    print("\n📨 メール送信準備中...")
+    print("管理者宛:", SMTP_FROM)
+    print("本人宛:", user_email)
+
     msg_admin = EmailMessage()
     msg_admin['Subject'] = subject_admin
     msg_admin['From'] = SMTP_FROM
     msg_admin['To'] = SMTP_FROM
     msg_admin.set_content(f"以下の内容で新規受付がありました。\n\nユーザーID: {user_id}\n\n{summary}")
 
-    # 本人宛
     msg_user = EmailMessage()
     msg_user['Subject'] = subject_user
     msg_user['From'] = SMTP_FROM
@@ -80,57 +82,27 @@ def send_summary_email_to_admin_and_user(summary, user_id, user_email):
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            print("✅ SMTP接続中...")
             smtp.starttls()
             smtp.login(SMTP_USER, SMTP_PASS)
+            print("✅ SMTPログイン成功")
             smtp.send_message(msg_admin)
             smtp.send_message(msg_user)
+            print("✅ メール送信完了")
     except Exception as e:
         print("【問診結果メール送信エラー】", repr(e))
 
-def start_registration(user_id, reply_token):
-    user_states[user_id] = {}
-    completed_users.discard(user_id)
-    profile = line_bot_api.get_profile(user_id)
-    nickname = profile.display_name
-    greeting = (
-        f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0722.1355\n"
-        "このたびはご登録くださり、誠にありがとうございます。\n"
-        "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
-        "☆今後のオンライン診療の進め方\n\n"
-        "１．簡単な問診\n"
-        "　　　↓\n"
-        "２．お薬のご選択\n"
-        "　　　↓\n"
-        "３．LINEビデオ通話による診察\n"
-        "　　　↓\n"
-        "４．お薬をご自宅に発送"
-    )
-    line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
-    try:
-        send_notification_email(user_id, nickname)
-    except Exception as e:
-        print("【メール送信エラー】", repr(e))
+def finalize_response(event, user_id, state):
+    summary_lines = [f"{k}: {v}" for k, v in state.items()]
+    summary = "\n".join(summary_lines)
 
-@app.route("/callback", methods=["POST"])
-def callback():
-    signature = request.headers.get("X-Line-Signature")
-    body = request.get_data(as_text=True)
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-    return "OK"
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
+    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
 
-@app.route("/admin/reset", methods=["POST"])
-def admin_reset():
-    user_states.clear()
-    completed_users.clear()
-    return "All states reset", 200
+    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
 
-@handler.add(FollowEvent)
-def handle_follow(event):
-    start_registration(event.source.user_id, event.reply_token)
+    completed_users.add(user_id)
+    user_states.pop(user_id, None)
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
@@ -218,18 +190,6 @@ def handle_postback(event):
         else:
             finalize_response(event, user_id, state)
 
-def finalize_response(event, user_id, state):
-    summary_lines = [f"{k}: {v}" for k, v in state.items()]
-    summary = "\n".join(summary_lines)
-
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
-    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
-
-    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
-
-    completed_users.add(user_id)
-    user_states.pop(user_id, None)
-
 def send_buttons(reply_token, text, buttons):
     contents = {
         "type": "bubble",
@@ -256,6 +216,47 @@ def send_buttons(reply_token, text, buttons):
     }
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
+
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers.get("X-Line-Signature")
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return "OK"
+
+@app.route("/admin/reset", methods=["POST"])
+def admin_reset():
+    user_states.clear()
+    completed_users.clear()
+    return "All states reset", 200
+
+def start_registration(user_id, reply_token):
+    user_states[user_id] = {}
+    completed_users.discard(user_id)
+    profile = line_bot_api.get_profile(user_id)
+    nickname = profile.display_name
+    greeting = (
+        f"{nickname}様\n\n"
+        f"{ACCOUNT_NAME}でございます。ver0722.1400\n"
+        "このたびはご登録くださり、誠にありがとうございます。\n"
+        "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
+        "☆今後のオンライン診療の進め方\n\n"
+        "１．簡単な問診\n"
+        "　　　↓\n"
+        "２．お薬のご選択\n"
+        "　　　↓\n"
+        "３．LINEビデオ通話による診察\n"
+        "　　　↓\n"
+        "４．お薬をご自宅に発送"
+    )
+    line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
+    try:
+        send_notification_email(user_id, nickname)
+    except Exception as e:
+        print("【メール送信エラー】", repr(e))
 
 if __name__ == "__main__":
     app.run()
