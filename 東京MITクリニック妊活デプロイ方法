@@ -1,0 +1,25 @@
+東京MITでのデプロイ
+
+cd ~/Desktop/my-line-bot
+
+
+# ① my-line-bot ディレクトリへ移動（すでに入っていれば不要）
+cd ~/Desktop/my-line-bot
+
+# ② 変更されたファイルを Git に追加
+git add .
+
+# ③ コミット（変更内容を説明）
+git commit -m "最新のアンケート機能を追加"
+
+# ④ GitHub の main ブランチに push（アップロード）
+git push origin main
+
+
+
+
+cd ~/Desktop/my-line-bot
+
+git add .
+git commit -m "最新のアンケート機能を追加"
+git push origin main

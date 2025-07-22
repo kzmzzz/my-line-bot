@@ -112,42 +112,32 @@ def handle_text(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
 
-    # ↓↓↓ 一時的に再回答制限をOFFにするためコメントアウト ↓↓↓
-    # if user_id in completed_users and text in ("新規登録","問診"):
-    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="すでに問診にご回答いただいています。"))
-    #     return
-
-    # if user_id in completed_users:
-    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
-    #     return
-    # ↑↑↑ コメントアウトここまで ↑↑↑
-
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
-        line_bot_api.push_message(user_id, TextSendMessage(text="お名前を教えてください。"))
+        line_bot_api.push_message(user_id, TextSendMessage(text="お名前を入力してください。"))
         return
 
     step = get_next_question(state)
     if step == "お名前":
         if text:
             state["お名前"] = text
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号をハイフンなしで入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="お電話番号をハイフンなしで入力してください。"))
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="お名前を入力してください。"))
         return
 
     elif step == "電話番号":
-        if text.isdigit() and len(text) == 11:
+        if text.isdigit() and len(text) in (10, 11):
             state["電話番号"] = text
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メールアドレスを入力してください。"))
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は11桁の数字で入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。"))
         return
 
     elif step == "メールアドレス":
         if "@" in text and "." in text:
             state["メールアドレス"] = text
-            buttons = [{"label":"はい","data":"alcohol_yes"},{"label":"いいえ","data":"alcohol_no"}]
+            buttons = [{"label": "はい", "data": "alcohol_yes"}, {"label": "いいえ", "data": "alcohol_no"}]
             send_buttons(event.reply_token, "アルコールを常習的に摂取していますか？", buttons)
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メールアドレスの形式が正しくありません。"))
@@ -169,31 +159,25 @@ def handle_postback(event):
     state = user_states.setdefault(user_id, {})
     data = event.postback.data
 
-    # ↓↓↓ 一時的に再回答制限をOFFにするためコメントアウト ↓↓↓
-    # if user_id in completed_users:
-    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答いただいております。ありがとうございました。"))
-    #     return
-    # ↑↑↑ コメントアウトここまで ↑↑↑
-
     if data.startswith("alcohol_"):
         state["アルコール"] = "はい" if data == "alcohol_yes" else "いいえ"
-        buttons = [{"label":"はい","data":"steroid_yes"},{"label":"いいえ","data":"steroid_no"}]
+        buttons = [{"label": "はい", "data": "steroid_yes"}, {"label": "いいえ", "data": "steroid_no"}]
         send_buttons(event.reply_token, "副腎皮質ホルモン剤を投与中ですか？", buttons)
 
     elif data.startswith("steroid_"):
         state["副腎皮質ホルモン剤"] = "はい" if data == "steroid_yes" else "いいえ"
-        buttons = [{"label":"はい","data":"cancer_yes"},{"label":"いいえ","data":"cancer_no"}]
-        send_buttons(event.reply_token, "がんにかかっていて治療中ですか？", buttons)
+        buttons = [{"label": "はい", "data": "cancer_yes"}, {"label": "いいえ", "data": "cancer_no"}]
+        send_buttons(event.reply_token, "ガンを治療中ですか？", buttons)
 
     elif data.startswith("cancer_"):
         state["がん"] = "はい" if data == "cancer_yes" else "いいえ"
-        buttons = [{"label":"はい","data":"diabetes_yes"},{"label":"いいえ","data":"diabetes_no"}]
-        send_buttons(event.reply_token, "糖尿病で治療中ですか？", buttons)
+        buttons = [{"label": "はい", "data": "diabetes_yes"}, {"label": "いいえ", "data": "diabetes_no"}]
+        send_buttons(event.reply_token, "糖尿病を治療中ですか？", buttons)
 
     elif data.startswith("diabetes_"):
         state["糖尿病"] = "はい" if data == "diabetes_yes" else "いいえ"
-        buttons = [{"label":"はい","data":"otherdisease_yes"},{"label":"いいえ","data":"otherdisease_no"}]
-        send_buttons(event.reply_token, "そのほか、なにか病気にかかっていますか？", buttons)
+        buttons = [{"label": "はい", "data": "otherdisease_yes"}, {"label": "いいえ", "data": "otherdisease_no"}]
+        send_buttons(event.reply_token, "その他、何か病気で通院していますか？", buttons)
 
     elif data.startswith("otherdisease_"):
         state["その他病気"] = "はい" if data == "otherdisease_yes" else "いいえ"
@@ -205,7 +189,7 @@ def handle_postback(event):
 def finalize_response(event, user_id, state):
     summary_lines = [f"{k}: {v}" for k, v in state.items()]
     summary = "\n".join(summary_lines)
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。内容をプッシュでお送りします。"))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
     line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
     completed_users.add(user_id)
     user_states.pop(user_id, None)
