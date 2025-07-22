@@ -43,7 +43,7 @@ def send_notification_email(user_id, nickname):
     msg = EmailMessage()
     msg['Subject'] = f"【新規登録通知】{nickname} 様"
     msg['From'] = SMTP_FROM
-    msg['To'] = 'website@eel.style'
+    msg['To'] = SMTP_FROM
     msg.set_content(
         f"LINE Botで新規登録がありました。\n"
         f"ユーザーID: {user_id}\n"
@@ -54,6 +54,39 @@ def send_notification_email(user_id, nickname):
         smtp.login(SMTP_USER, SMTP_PASS)
         smtp.send_message(msg)
 
+def send_summary_email_to_admin_and_user(summary, user_id, user_email):
+    subject_admin = "東京MITクリニック妊活オンライン診療で受け付けました。"
+    subject_user = "東京MITクリニック妊活オンライン診療で受け付けました。"
+
+    # 管理者宛
+    msg_admin = EmailMessage()
+    msg_admin['Subject'] = subject_admin
+    msg_admin['From'] = SMTP_FROM
+    msg_admin['To'] = SMTP_FROM
+    msg_admin.set_content(f"以下の内容で新規受付がありました。\n\nユーザーID: {user_id}\n\n{summary}")
+
+    # 本人宛
+    msg_user = EmailMessage()
+    msg_user['Subject'] = subject_user
+    msg_user['From'] = SMTP_FROM
+    msg_user['To'] = user_email
+    msg_user.set_content(
+        f"{ACCOUNT_NAME}より\n\n"
+        "以下の内容で妊活オンライン診療の問診を受け付けました。\n\n"
+        f"{summary}\n\n"
+        "ご不明点がございましたらご連絡ください。\n\n"
+        "このメールは自動送信です。"
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg_admin)
+            smtp.send_message(msg_user)
+    except Exception as e:
+        print("【問診結果メール送信エラー】", repr(e))
+
 def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.discard(user_id)
@@ -61,7 +94,7 @@ def start_registration(user_id, reply_token):
     nickname = profile.display_name
     greeting = (
         f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0722.1340\n"
+        f"{ACCOUNT_NAME}でございます。ver0722.1355\n"
         "このたびはご登録くださり、誠にありがとうございます。\n"
         "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
         "☆今後のオンライン診療の進め方\n\n"
@@ -188,8 +221,12 @@ def handle_postback(event):
 def finalize_response(event, user_id, state):
     summary_lines = [f"{k}: {v}" for k, v in state.items()]
     summary = "\n".join(summary_lines)
+
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
     line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
+
+    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
+
     completed_users.add(user_id)
     user_states.pop(user_id, None)
 
