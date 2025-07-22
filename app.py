@@ -189,8 +189,16 @@ def handle_postback(event):
 def finalize_response(event, user_id, state):
     summary_lines = [f"{k}: {v}" for k, v in state.items()]
     summary = "\n".join(summary_lines)
+
+    # 即時応答
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
     line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
+
+    # ✅ 1分後に結果案内
+    Timer(60, lambda uid=user_id: line_bot_api.push_message(
+        uid, TextSendMessage(text="お待たせしました。問診結果をご案内します。"))
+    ).start()
+
     completed_users.add(user_id)
     user_states.pop(user_id, None)
 
