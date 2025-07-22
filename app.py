@@ -104,7 +104,7 @@ def start_registration(user_id, reply_token):
     nickname = profile.display_name
     greeting = (
         f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0722.1600\n"
+        f"{ACCOUNT_NAME}でございます。ver0723.0830\n"
         "このたびはご登録くださり、誠にありがとうございます。\n"
         "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
         "☆今後のオンライン診療の進め方\n\n"
