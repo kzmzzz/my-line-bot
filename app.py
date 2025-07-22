@@ -92,17 +92,44 @@ def send_summary_email_to_admin_and_user(summary, user_id, user_email):
     except Exception as e:
         print("【問診結果メール送信エラー】", repr(e))
 
-def finalize_response(event, user_id, state):
-    summary_lines = [f"{k}: {v}" for k, v in state.items()]
-    summary = "\n".join(summary_lines)
-
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
-    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
-
-    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
-
-    completed_users.add(user_id)
-    user_states.pop(user_id, None)
+def start_registration(user_id, reply_token):
+    user_states[user_id] = {}
+    completed_users.discard(user_id)
+    profile = line_bot_api.get_profile(user_id)
+    nickname = profile.display_name
+    greeting = (
+        f"{nickname}様\n\n"
+        f"{ACCOUNT_NAME}でございます。ver0722.1515\n"
+        "このたびはご登録くださり、誠にありがとうございます。\n"
+        "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
+        "☆今後のオンライン診療の進め方\n\n"
+        "１．簡単な問診\n"
+        "　　　↓\n"
+        "２．お薬のご選択\n"
+        "　　　↓\n"
+        "３．LINEビデオ通話による診察\n"
+        "　　　↓\n"
+        "４．お薬をご自宅に発送"
+    )
+    line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
+    try:
+        msg = EmailMessage()
+        msg['Subject'] = "【新規登録】東京MITクリニック妊活オンライン診療から新しい登録がありました。"
+        msg['From'] = SMTP_USER
+        msg['To'] = SMTP_USER
+        msg.set_content(
+            f"{nickname} 様より新規登録がありました。\n\n"
+            f"ユーザーID: {user_id}\n"
+            f"LINE表示名: {nickname}\n\n"
+            "オンライン診療の問診がまもなく開始されます。"
+        )
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg)
+            print("✅ 新規登録通知メール送信完了")
+    except Exception as e:
+        print("【新規登録通知メール送信エラー】", repr(e))
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
@@ -189,6 +216,15 @@ def handle_postback(event):
         else:
             finalize_response(event, user_id, state)
 
+def finalize_response(event, user_id, state):
+    summary_lines = [f"{k}: {v}" for k, v in state.items()]
+    summary = "\n".join(summary_lines)
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
+    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
+    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
+    completed_users.add(user_id)
+    user_states.pop(user_id, None)
+
 def send_buttons(reply_token, text, buttons):
     contents = {
         "type": "bubble",
@@ -231,31 +267,6 @@ def admin_reset():
     user_states.clear()
     completed_users.clear()
     return "All states reset", 200
-
-def start_registration(user_id, reply_token):
-    user_states[user_id] = {}
-    completed_users.discard(user_id)
-    profile = line_bot_api.get_profile(user_id)
-    nickname = profile.display_name
-    greeting = (
-        f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。ver0722.1500\n"
-        "このたびはご登録くださり、誠にありがとうございます。\n"
-        "『GHPR-2（セルアクチン）』の処方を希望される方は、LINEによるオンライン診療（問診）にお進みください。\n\n"
-        "☆今後のオンライン診療の進め方\n\n"
-        "１．簡単な問診\n"
-        "　　　↓\n"
-        "２．お薬のご選択\n"
-        "　　　↓\n"
-        "３．LINEビデオ通話による診察\n"
-        "　　　↓\n"
-        "４．お薬をご自宅に発送"
-    )
-    line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
-    try:
-        send_notification_email(user_id, nickname)
-    except Exception as e:
-        print("【メール送信エラー】", repr(e))
 
 if __name__ == "__main__":
     app.run()
