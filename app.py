@@ -9,6 +9,7 @@ import os
 import smtplib
 from email.message import EmailMessage
 from dotenv import load_dotenv
+from datetime import date, datetime
 
 load_dotenv()
 
@@ -31,8 +32,12 @@ user_states = {}
 completed_users = set()
 
 def get_next_question(state):
-    for step in ["お名前", "電話番号", "メールアドレス",
-                 "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気"]:
+    for step in [
+        "お名前", "電話番号",
+        "生年月日_年", "生年月日_月", "生年月日_日",
+        "メールアドレス",
+        "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気"
+    ]:
         if step not in state:
             return step
     if state.get("その他病気") == "はい" and "病名" not in state:
@@ -130,6 +135,7 @@ def start_registration(user_id, reply_token):
             print("✅ 新規登録通知メール送信完了")
     except Exception as e:
         print("【新規登録通知メール送信エラー】", repr(e))
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
@@ -148,6 +154,7 @@ def handle_text(event):
         return
 
     step = get_next_question(state)
+
     if step == "お名前":
         if text:
             state["お名前"] = text
@@ -159,9 +166,53 @@ def handle_text(event):
     elif step == "電話番号":
         if text.isdigit() and len(text) in (10, 11):
             state["電話番号"] = text
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メールアドレスを入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた西暦（4桁）を入力してください。"))
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。"))
+        return
+
+    elif step == "生年月日_年":
+        if text.isdigit() and len(text) == 4:
+            year = int(text)
+            if 1900 <= year <= 2100:
+                state["生年月日_年"] = year
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた月（1〜12）を入力してください。"))
+            else:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="1900年〜2100年の間で入力してください。"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="西暦4桁で入力してください（例：1980）。"))
+        return
+
+    elif step == "生年月日_月":
+        if text.isdigit():
+            month = int(text)
+            if 1 <= month <= 12:
+                state["生年月日_月"] = month
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた日（1〜31）を入力してください。"))
+            else:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="月は1〜12の数字で入力してください。"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="月は数字で入力してください（例：6）。"))
+        return
+
+    elif step == "生年月日_日":
+        if text.isdigit():
+            day = int(text)
+            year = state.get("生年月日_年")
+            month = state.get("生年月日_月")
+            try:
+                birth = date(year, month, day)
+                state["生年月日_日"] = day
+                state["生年月日"] = birth.strftime("%Y-%m-%d")
+                today = date.today()
+                age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+                state["年齢"] = str(age)
+                readable = f"{year}年{month}月{day}日"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{readable}ですね。\n次にメールアドレスを入力してください。"))
+            except ValueError:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="その日は存在しない日付です。もう一度入力してください。"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="日にちは数字で入力してください（例：10）。"))
         return
 
     elif step == "メールアドレス":
