@@ -282,16 +282,20 @@ def finalize_response(event, user_id, state):
             summary_lines.append(f"{k}: {v}")
 
     summary_text = "\n".join(summary_lines)
+
+    # 管理者宛にはECリンクなし
+    admin_summary = f"以下の内容で承りました：\n\n{summary_text}"
+
+    # ユーザー宛にはECリンクあり
     followup_text = (
         "\n\nでは早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
         "https://70vhnafm3wj1pjo0yitq.stores.jp"
     )
-
-    full_message = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
+    user_summary = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
-    line_bot_api.push_message(user_id, TextSendMessage(text=full_message))
-    send_summary_email_to_admin_and_user(full_message, user_id, state.get("メールアドレス", ""))
+    line_bot_api.push_message(user_id, TextSendMessage(text=user_summary))
+    send_summary_email_to_admin_and_user(admin_summary, user_id, state.get("メールアドレス", ""))
     completed_users.add(user_id)
     user_states.pop(user_id, None)
 
