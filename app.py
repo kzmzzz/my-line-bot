@@ -288,7 +288,10 @@ def finalize_response(event, user_id, state):
 
     # ユーザー宛にはECリンクあり
     followup_text = (
-        "\n\nでは早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
+        "\n\nご回答ありがとうございました。\n\n
+このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事させて頂きます。\n\n
+ご連絡までに１〜２日のお時間をいただきます事を、ご了承ください。\n\n
+        \n\nでは早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
         "https://70vhnafm3wj1pjo0yitq.stores.jp"
     )
     user_summary = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
