@@ -268,11 +268,30 @@ def handle_postback(event):
             finalize_response(event, user_id, state)
 
 def finalize_response(event, user_id, state):
-    summary_lines = [f"{k}: {v}" for k, v in state.items()]
-    summary = "\n".join(summary_lines)
+    summary_lines = []
+    for k, v in state.items():
+        if k in ("生年月日_年", "生年月日_月", "生年月日_日", "年齢"):
+            continue
+        elif k == "生年月日":
+            birth_date = datetime.strptime(v, "%Y-%m-%d").date()
+            today = date.today()
+            age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+            formatted_birth = f"{birth_date.year}年{birth_date.month}月{birth_date.day}日（満{age}歳）"
+            summary_lines.append(f"生年月日: {formatted_birth}")
+        else:
+            summary_lines.append(f"{k}: {v}")
+
+    summary_text = "\n".join(summary_lines)
+    followup_text = (
+        "\n\nでは早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
+        "https://70vhnafm3wj1pjo0yitq.stores.jp"
+    )
+
+    full_message = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
+
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
-    line_bot_api.push_message(user_id, TextSendMessage(text=f"以下の内容で承りました：\n\n{summary}"))
-    send_summary_email_to_admin_and_user(summary, user_id, state.get("メールアドレス", ""))
+    line_bot_api.push_message(user_id, TextSendMessage(text=full_message))
+    send_summary_email_to_admin_and_user(full_message, user_id, state.get("メールアドレス", ""))
     completed_users.add(user_id)
     user_states.pop(user_id, None)
 
