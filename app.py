@@ -59,44 +59,6 @@ def send_notification_email(user_id, nickname):
         smtp.login(SMTP_USER, SMTP_PASS)
         smtp.send_message(msg)
 
-def send_summary_email_to_admin_and_user(summary, user_id, user_email):
-    subject_admin = "東京MITクリニック妊活オンライン診療で受け付けました。"
-    subject_user = "東京MITクリニック妊活オンライン診療で受け付けました。"
-
-    print("\n📨 メール送信準備中...")
-    print("管理者宛:", SMTP_FROM)
-    print("本人宛:", user_email)
-
-    msg_admin = EmailMessage()
-    msg_admin['Subject'] = subject_admin
-    msg_admin['From'] = SMTP_USER
-    msg_admin['To'] = SMTP_FROM
-    msg_admin.set_content(f"以下の内容で新規受付がありました。\n\nユーザーID: {user_id}\n\n{summary}")
-
-    msg_user = EmailMessage()
-    msg_user['Subject'] = subject_user
-    msg_user['From'] = SMTP_USER
-    msg_user['To'] = user_email
-    msg_user.set_content(
-        f"{ACCOUNT_NAME}より\n\n"
-        "以下の内容で妊活オンライン診療の問診を受け付けました。\n\n"
-        f"{summary}\n\n"
-        "ご不明点がございましたらご連絡ください。\n\n"
-        "このメールは自動送信です。"
-    )
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-            print("✅ SMTP接続中...")
-            smtp.starttls()
-            smtp.login(SMTP_USER, SMTP_PASS)
-            print("✅ SMTPログイン成功")
-            smtp.send_message(msg_admin)
-            smtp.send_message(msg_user)
-            print("✅ メール送信完了")
-    except Exception as e:
-        print("【問診結果メール送信エラー】", repr(e))
-
 def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.discard(user_id)
@@ -117,24 +79,7 @@ def start_registration(user_id, reply_token):
         "４．お薬をご自宅に発送"
     )
     line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
-    try:
-        msg = EmailMessage()
-        msg['Subject'] = "【新規登録】東京MITクリニック妊活オンライン診療から新しい登録がありました。"
-        msg['From'] = SMTP_USER
-        msg['To'] = SMTP_USER
-        msg.set_content(
-            f"{nickname} 様より新規登録がありました。\n\n"
-            f"ユーザーID: {user_id}\n"
-            f"LINE表示名: {nickname}\n\n"
-            "オンライン診療の問診がまもなく開始されます。"
-        )
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-            smtp.starttls()
-            smtp.login(SMTP_USER, SMTP_PASS)
-            smtp.send_message(msg)
-            print("✅ 新規登録通知メール送信完了")
-    except Exception as e:
-        print("【新規登録通知メール送信エラー】", repr(e))
+    line_bot_api.push_message(user_id, TextSendMessage(text="お名前を入力してください。"))
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
@@ -150,7 +95,6 @@ def handle_text(event):
 
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
-        line_bot_api.push_message(user_id, TextSendMessage(text="お名前を入力してください。"))
         return
 
     step = get_next_question(state)
@@ -267,6 +211,7 @@ def handle_postback(event):
         else:
             finalize_response(event, user_id, state)
 
+
 def finalize_response(event, user_id, state):
     summary_lines = []
     for k, v in state.items():
@@ -283,24 +228,63 @@ def finalize_response(event, user_id, state):
 
     summary_text = "\n".join(summary_lines)
 
-    # 管理者宛にはECリンクなし
-    admin_summary = f"以下の内容で承りました：\n\n{summary_text}"
+    profile = line_bot_api.get_profile(user_id)
+    nickname = profile.display_name
 
-    # ユーザー宛にはECリンクあり
-    followup_text = (
-    "\n\nご回答ありがとうございました。\n\n"
-    "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事させて頂きます。\n\n"
-    "ご連絡までに１〜２日のお時間をいただきます事を、ご了承ください。\n\n"
-    "では早速ECサイトのURLをクリックして、商品をご選択ください。\n\n"
-    "https://70vhnafm3wj1pjo0yitq.stores.jp"
-)
-    user_summary = f"以下の内容で承りました：\n\n{summary_text}{followup_text}"
+    user_summary = (
+        f"{nickname}様\n\n"
+        "昨日の問診へのご回答、誠にありがとうございました。\n\n"
+        "以下が、ご入力いただいた内容になりますのでご確認ください。\n\n"
+        f"{summary_text}\n\n"
+        "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事させて頂きます。\n\n"
+        "ご連絡までに１〜２日のお時間をいただきます事を、ご了承ください。\n\n"
+        "では早速、ECサイトのURLをクリックして、商品をご選択ください。\n\n"
+        "https://70vhnafm3wj1pjo0yitq.stores.jp"
+    )
 
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご回答ありがとうございました。ご回答内容をお送りします。"))
+    admin_summary = f"以下の内容で問診を受け付けました：\n\n{summary_text}"
+
     line_bot_api.push_message(user_id, TextSendMessage(text=user_summary))
-    send_summary_email_to_admin_and_user(admin_summary, user_id, state.get("メールアドレス", ""))
+
+    send_summary_email_to_admin_and_user(
+        summary=admin_summary,
+        user_id=user_id,
+        user_email=state.get("メールアドレス", "")
+    )
+
     completed_users.add(user_id)
     user_states.pop(user_id, None)
+
+def send_summary_email_to_admin_and_user(summary, user_id, user_email):
+    subject_admin = "東京MITクリニック妊活オンライン診療 問診受領"
+    subject_user = "東京MITクリニック妊活オンライン診療のご確認"
+
+    msg_admin = EmailMessage()
+    msg_admin['Subject'] = subject_admin
+    msg_admin['From'] = SMTP_USER
+    msg_admin['To'] = SMTP_FROM
+    msg_admin.set_content(f"{summary}\n\nユーザーID: {user_id}")
+
+    msg_user = EmailMessage()
+    msg_user['Subject'] = subject_user
+    msg_user['From'] = SMTP_USER
+    msg_user['To'] = user_email
+    msg_user.set_content(
+        f"{ACCOUNT_NAME}より\n\n"
+        "問診内容を受け付けました。\n\n"
+        f"{summary}\n\n"
+        "ご不明点がございましたらご連絡ください。\n\n"
+        "このメールは自動送信です。"
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg_admin)
+            smtp.send_message(msg_user)
+    except Exception as e:
+        print("【メール送信エラー】", repr(e))
 
 def send_buttons(reply_token, text, buttons):
     contents = {
