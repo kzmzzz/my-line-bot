@@ -3,7 +3,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage,
-    PostbackEvent, FlexSendMessage
+    PostbackEvent, FlexSendMessage, FollowEvent
 )
 import os
 import smtplib
@@ -140,6 +140,12 @@ def send_buttons(reply_token, text, buttons):
     message = FlexSendMessage(alt_text=text, contents=contents)
     line_bot_api.reply_message(reply_token, message)
 
+# ====== 友だち追加（FollowEvent） ======
+@handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    start_registration(user_id, event.reply_token)
+
 # ====== テキスト受信（入力フロー） ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
@@ -154,7 +160,7 @@ def handle_text(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
 
-    # 開始
+    # 開始（テスト用に残す）
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         return

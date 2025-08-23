@@ -1,0 +1,23 @@
+東京MITでのデプロイ
+
+
+cd ~/Desktop/my-line-bot
+これは最初の一回だけ。
+
+
+次に一つずつ入力して実行
+
+git init
+git add .
+git commit -m "最初のコミット（app.py + 依存関係）"
+git push origin main
+
+
+最後にRenderでManual Deploy をクリックしてDeploy latest commitをクリック。
+5分ほど待つ。
+
+
+
+
+
+cd ~/Desktop/my-line-bot
