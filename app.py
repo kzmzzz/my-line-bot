@@ -7,6 +7,7 @@ from linebot.models import (
 )
 import os
 import smtplib
+import time as time_module
 from email.message import EmailMessage
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta, time
@@ -24,18 +25,26 @@ ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
-SMTP_PASS = os.getenv("SMTP_PASS", "hadfi0609")
-SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+# From は到達性のため SMTP_USER と同一にする（サーバのポリシーに沿う）
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0") == "1"   # 1なら SMTPS(465)
+SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1ならSMTPプロトコルログ
 
-OFFICE_TO = os.getenv("OFFICE_TO", SMTP_FROM)
-OFFICE_CC = os.getenv("OFFICE_CC", "kzmlll@hotmail.com")
+# 事務局宛先（デフォルトは website@eel.style のみ）
+OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
+OFFICE_CC = os.getenv("OFFICE_CC", "")  # 空ならCCなし
+
+# メールテスト機能の制御
+MAIL_TEST_ENABLED = os.getenv("MAIL_TEST_ENABLED", "0") == "1"
+ADMIN_USER_IDS = [u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") if u.strip()]
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ====== 状態管理 ======
-user_states = {}
-completed_users = {}
+user_states = {}                 # user_id -> dict(回答ステート)
+completed_users = {}             # user_id -> (完了日時, サマリー文字列)
 
 # ====== 質問フロー ======
 QUESTION_STEPS = [
@@ -60,14 +69,55 @@ def get_next_question(state):
             return step
     return None
 
+# ====== 権限ユーティリティ ======
+def is_admin(user_id: str) -> bool:
+    if not MAIL_TEST_ENABLED:
+        return False
+    if not ADMIN_USER_IDS:
+        return False
+    return user_id in ADMIN_USER_IDS
+
+# ====== SMTPユーティリティ（SSL/STARTTLS切替・デバッグ・リトライ） ======
+def _send_email(msg: EmailMessage):
+    retries = 2
+    delay = 1.5
+    for attempt in range(retries + 1):
+        try:
+            if SMTP_USE_SSL:
+                with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+                    if SMTP_DEBUG: smtp.set_debuglevel(1)
+                    if SMTP_USER and SMTP_PASS:
+                        smtp.login(SMTP_USER, SMTP_PASS)
+                    smtp.send_message(msg)
+            else:
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+                    if SMTP_DEBUG: smtp.set_debuglevel(1)
+                    smtp.ehlo()
+                    try:
+                        smtp.starttls()
+                        smtp.ehlo()
+                    except smtplib.SMTPException as _e:
+                        if SMTP_DEBUG: print("STARTTLS not supported or failed, continuing without TLS:", repr(_e))
+                    if SMTP_USER and SMTP_PASS:
+                        smtp.login(SMTP_USER, SMTP_PASS)
+                    smtp.send_message(msg)
+            return  # 送信成功
+        except Exception as e:
+            print(f"【SMTP送信エラー: attempt {attempt+1}/{retries+1}】", repr(e))
+            if attempt < retries:
+                time_module.sleep(delay)
+                delay *= 2
+            else:
+                raise
+
 # ====== メール送信（事務局のみ） ======
 def send_summary_email_to_office(summary, user_id):
     subject_admin = "東京MITクリニック 妊活オンライン診療：問診を受け付けました（事務局通知）"
     msg_admin = EmailMessage()
     msg_admin["Subject"] = subject_admin
-    msg_admin["From"] = SMTP_USER
+    msg_admin["From"] = SMTP_FROM
     msg_admin["To"] = OFFICE_TO
-    if OFFICE_CC:
+    if OFFICE_CC and OFFICE_CC.strip() and OFFICE_CC.strip().lower() != OFFICE_TO.strip().lower():
         msg_admin["Cc"] = OFFICE_CC
 
     try:
@@ -83,14 +133,38 @@ def send_summary_email_to_office(summary, user_id):
     )
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-            smtp.starttls()
-            smtp.login(SMTP_USER, SMTP_PASS)
-            smtp.send_message(msg_admin)
+        _send_email(msg_admin)
     except Exception as e:
         print("【問診結果メール送信エラー（事務局）】", repr(e))
 
-# ====== 初期化 ======
+# ====== （新規）メールテスト送信 ======
+def send_test_email(to_addr: str, body: str, user_id: str):
+    subject = "【テスト送信】東京MITクリニック 妊活オンライン診療"
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_addr
+
+    try:
+        nickname = line_bot_api.get_profile(user_id).display_name
+    except Exception:
+        nickname = "ご利用者様"
+
+    content = (
+        "このメールはテスト送信です。\n\n"
+        f"送信者（LINE表示名）: {nickname}\n"
+        f"ユーザーID: {user_id}\n\n"
+        f"本文:\n{body or '（本文なし）'}"
+    )
+    msg.set_content(content)
+
+    try:
+        _send_email(msg)
+        return True, None
+    except Exception as e:
+        return False, repr(e)
+
+# ====== 初期化（友だち追加/新規登録/問診） ======
 def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.pop(user_id, None)
@@ -130,25 +204,58 @@ def handle_follow(event):
     user_id = event.source.user_id
     start_registration(user_id, event.reply_token)
 
-# ====== テキスト受信 ======
+# ====== テキスト受信（入力フロー & メールテスト） ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
+    # ---- 管理者向け：メールテスト機能 ----
+    # 1) 「メールテスト [本文任意]」 -> OFFICE_TO に送信
+    if is_admin(user_id) and text.startswith("メールテスト"):
+        body = text[len("メールテスト"):].strip() or "動作確認テスト送信"
+        ok, err = send_test_email(OFFICE_TO, body, user_id)
+        if ok:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"事務局宛にテストメールを送信しました。\nTo: {OFFICE_TO}"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {err}"))
+        return
+
+    # 2) 「メール <宛先> <本文>」 -> 任意宛先に送信（簡易バリデーション）
+    if is_admin(user_id) and text.startswith("メール "):
+        parts = text.split(maxsplit=2)
+        if len(parts) >= 2:
+            to_addr = parts[1]
+            body = parts[2] if len(parts) >= 3 else "動作確認テスト送信"
+            if "@" in to_addr and "." in to_addr and " " not in to_addr:
+                ok, err = send_test_email(to_addr, body, user_id)
+                if ok:
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テストメールを送信しました。\nTo: {to_addr}"))
+                else:
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {err}"))
+            else:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="宛先メールアドレスの形式が正しくありません。例：\nメール test@example.com 本文"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="使い方：\nメール test@example.com 本文"))
+        return
+    # ---- ここまでメールテスト ----
+
+    # リセット
     if text == "リセット":
         user_states.pop(user_id, None)
         completed_users.pop(user_id, None)
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
 
+    # 開始（テスト用）
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         return
 
     step = get_next_question(state)
 
+    # ====== 各ステップ ======
     if step == "都道府県":
         state["都道府県"] = text
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご氏名（保険証と同じお名前を漢字フルネーム）を入力してください。"))
@@ -261,6 +368,7 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名を入力してください。"))
         return
 
+    # デフォルト
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
 
 # ====== ポストバック処理 ======
@@ -361,10 +469,12 @@ def finalize_response(event, user_id, state):
         "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名"
     ]
 
+    # 生年月日の統合
     if "生年月日" not in state and all(k in state for k in ("生年月日_年", "生年月日_月", "生年月日_日")):
         birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
 
+    # 表示整形
     lines = []
     name = state.get("お名前")
     furigana = state.get("フリガナ")
@@ -447,7 +557,7 @@ def schedule_daily_followup():
             line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
             del completed_users[uid]
 
-# APScheduler 起動
+# APScheduler 起動（毎日9:00 JST）
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
 scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
 scheduler.start()
