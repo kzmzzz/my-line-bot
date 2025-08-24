@@ -12,6 +12,7 @@ from email.message import EmailMessage
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta, time
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
@@ -27,8 +28,7 @@ SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
-# 到達性のため From は認証ユーザーと同一を推奨
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)          # 認証ユーザーと合わせるのが無難
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0") == "1"   # 1=465/SSL, 0=587/STARTTLS
 SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1でSMTP詳細ログ
 
@@ -36,11 +36,13 @@ SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1でSMTP詳細ログ
 OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
 OFFICE_CC = os.getenv("OFFICE_CC", "")  # 空ならCCなし
 
-# メールテスト機能（任意宛先送信は管理者のみ）
+# メールテスト機能（任意宛先は管理者のみ）
 MAIL_TEST_ENABLED = os.getenv("MAIL_TEST_ENABLED", "0") == "1"
 ADMIN_USER_IDS = [u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") if u.strip()]
 
-# フォローアップ送信のテスト切替
+# フォローアップ送信のテスト切替（JST）
+# 本番：前日23:59まで → 翌日09:00送信
+# テスト：当日 TEST_CUTOFF_* まで → 当日 TEST_SEND_* に送信
 FOLLOWUP_TEST_MODE = os.getenv("FOLLOWUP_TEST_MODE", "0") == "1"
 TEST_SEND_HOUR     = int(os.getenv("TEST_SEND_HOUR", "6"))
 TEST_SEND_MINUTE   = int(os.getenv("TEST_SEND_MINUTE", "50"))
@@ -50,7 +52,7 @@ TEST_CUTOFF_MINUTE = int(os.getenv("TEST_CUTOFF_MINUTE", "45"))
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ====== 状態管理 ======
+# ====== 状態管理（メモリ保持：再起動/再デプロイで消えます） ======
 user_states = {}                 # user_id -> dict(回答ステート)
 completed_users = {}             # user_id -> (完了日時, サマリー文字列)
 
@@ -109,7 +111,7 @@ def _send_email(msg: EmailMessage):
                     if SMTP_USER and SMTP_PASS:
                         smtp.login(SMTP_USER, SMTP_PASS)
                     smtp.send_message(msg)
-            return  # 送信成功
+            return
         except Exception as e:
             print(f"【SMTP送信エラー: attempt {attempt+1}/{retries+1}】", repr(e))
             if attempt < retries:
@@ -212,12 +214,21 @@ def handle_follow(event):
     user_id = event.source.user_id
     start_registration(user_id, event.reply_token)
 
-# ====== テキスト受信（入力フロー & メールテスト） ======
+# ====== テキスト受信（入力フロー & コマンド） ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
+
+    # ---- 手動テスト送信（最優先で処理）----
+    if text == "テスト送信実行":
+        schedule_daily_followup()
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="フォローアップ送信を手動実行しました。ログを確認してください。")
+        )
+        return
 
     # 🔹誰でも：「メールテスト [本文任意]」 -> 事務局(OFFICE_TO)に送信
     if text.startswith("メールテスト"):
@@ -260,7 +271,7 @@ def handle_text(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
 
-    # 開始（テスト用）
+    # 開始（テスト用手動トリガ）
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         return
@@ -542,7 +553,7 @@ def finalize_response(event, user_id, state):
 def schedule_daily_followup():
     now = datetime.now()
     if FOLLOWUP_TEST_MODE:
-        cutoff = datetime.combine(now.date(), time(TEST_CUTOFF_HOUR, TEST_CUTOFF_MINUTE))
+        cutoff = datetime.combine(now.date(), time(TEST_CUTOFF_HOUR, TEST_CUTOFF_MINUTE))  # 必要なら秒に59を追加
         mode = "TEST"
     else:
         yesterday = now.date() - timedelta(days=1)
@@ -576,14 +587,21 @@ def schedule_daily_followup():
         line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
         del completed_users[uid]
 
+def _heartbeat():
+    print(f"[HB] {datetime.now():%Y-%m-%d %H:%M:%S} scheduler alive (test_mode={FOLLOWUP_TEST_MODE})")
+
 # ====== APScheduler 起動（JST） ======
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
+# 心拍ログ：毎分
+scheduler.add_job(_heartbeat, CronTrigger(minute="*/1"))
+
 if FOLLOWUP_TEST_MODE:
     scheduler.add_job(schedule_daily_followup, 'cron', hour=TEST_SEND_HOUR, minute=TEST_SEND_MINUTE)
     print(f"[Followup] MODE=TEST  cutoff={TEST_CUTOFF_HOUR:02d}:{TEST_CUTOFF_MINUTE:02d}  send={TEST_SEND_HOUR:02d}:{TEST_SEND_MINUTE:02d} JST")
 else:
     scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
     print("[Followup] MODE=PROD  cutoff=23:59  send=09:00 JST")
+
 scheduler.start()
 
 # ====== ルーティング ======
