@@ -33,7 +33,7 @@ SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1ならSMTPプロトコ
 
 # 事務局宛先（デフォルトは website@eel.style のみ）
 OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
-OFFICE_CC = os.getenv("OFFICE_CC", "")  # 空ならCCなし
+OFFICE_CC = os.getenv("OFFICE_CC", "kzmlll@hotmail.com")  # 空ならCCなし
 
 # メールテスト機能の制御
 MAIL_TEST_ENABLED = os.getenv("MAIL_TEST_ENABLED", "0") == "1"
