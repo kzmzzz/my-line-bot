@@ -42,6 +42,31 @@ ADMIN_USER_IDS = [u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
+# ====== 環境変数 ======
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
+
+SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+
+OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
+OFFICE_CC = os.getenv("OFFICE_CC", "")
+
+# ====== フォローアップ送信のテスト切替 ======
+FOLLOWUP_TEST_MODE = os.getenv("FOLLOWUP_TEST_MODE", "0") == "1"
+TEST_SEND_HOUR   = int(os.getenv("TEST_SEND_HOUR", "6"))
+TEST_SEND_MINUTE = int(os.getenv("TEST_SEND_MINUTE", "50"))
+TEST_CUTOFF_HOUR   = int(os.getenv("TEST_CUTOFF_HOUR", "6"))
+TEST_CUTOFF_MINUTE = int(os.getenv("TEST_CUTOFF_MINUTE", "45"))
+
+
+
+
+
 # ====== 状態管理 ======
 user_states = {}                 # user_id -> dict(回答ステート)
 completed_users = {}             # user_id -> (完了日時, サマリー文字列)
@@ -539,11 +564,16 @@ def finalize_response(event, user_id, state):
     completed_users[user_id] = (datetime.now(), summary_text)
     user_states.pop(user_id, None)
 
-# ====== 翌朝9時の自動送信 ======
+# ====== フォローアップ自動送信 ======
 def schedule_daily_followup():
     now = datetime.now()
-    yesterday = now.date() - timedelta(days=1)
-    cutoff = datetime.combine(yesterday, time(23, 59, 59))
+    if FOLLOWUP_TEST_MODE:
+        # 例：当日 06:45 以前に完了した人へ送る（06:50に実行）
+        cutoff = datetime.combine(now.date(), time(TEST_CUTOFF_HOUR, TEST_CUTOFF_MINUTE))
+    else:
+        # 本番：前日 23:59:59 以前に完了した人へ、翌朝9:00に送る
+        yesterday = now.date() - timedelta(days=1)
+        cutoff = datetime.combine(yesterday, time(23, 59, 59))
 
     for uid, (finished_at, _summary_text) in list(completed_users.items()):
         if finished_at <= cutoff:
@@ -570,10 +600,17 @@ def schedule_daily_followup():
             line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
             del completed_users[uid]
 
-# APScheduler 起動（毎日9:00 JST）
+
+# APScheduler 起動（JST）
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
-scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
+if FOLLOWUP_TEST_MODE:
+    # 例：当日 06:50 に実行
+    scheduler.add_job(schedule_daily_followup, 'cron', hour=TEST_SEND_HOUR, minute=TEST_SEND_MINUTE)
+else:
+    # 本番：毎日 09:00 に実行
+    scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
 scheduler.start()
+
 
 # ====== ルーティング ======
 @app.route("/callback", methods=["POST"])
