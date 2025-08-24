@@ -211,18 +211,28 @@ def handle_text(event):
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
-    # ---- 管理者向け：メールテスト機能 ----
-    # 1) 「メールテスト [本文任意]」 -> OFFICE_TO に送信
-    if is_admin(user_id) and text.startswith("メールテスト"):
+    # 🔹誰からでも利用可：「メールテスト [本文任意]」 -> 事務局(OFFICE_TO)に送信
+    if text.startswith("メールテスト"):
         body = text[len("メールテスト"):].strip() or "動作確認テスト送信"
         ok, err = send_test_email(OFFICE_TO, body, user_id)
         if ok:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"事務局宛にテストメールを送信しました。\nTo: {OFFICE_TO}"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"事務局宛にテストメールを送信しました。\nTo: {OFFICE_TO}")
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {err}"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {err}")
+            )
         return
 
-    # 2) 「メール <宛先> <本文>」 -> 任意宛先に送信（簡易バリデーション）
+    # （任意）自分のUser ID確認
+    # if text == "マイID":
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"あなたのUser IDは:\n{user_id}"))
+    #     return
+
+    # 🔒管理者のみ：「メール <宛先> <本文>」 -> 任意宛先に送信（簡易バリデーション）
     if is_admin(user_id) and text.startswith("メール "):
         parts = text.split(maxsplit=2)
         if len(parts) >= 2:
@@ -239,6 +249,9 @@ def handle_text(event):
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="使い方：\nメール test@example.com 本文"))
         return
+
+    # －－この下は従来どおりのリセット/新規登録/問診フロー－－
+    # ...
     # ---- ここまでメールテスト ----
 
     # リセット
