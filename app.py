@@ -28,7 +28,7 @@ SMTP_PASS = os.getenv("SMTP_PASS", "hadfi0609")
 SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
 
 OFFICE_TO = os.getenv("OFFICE_TO", SMTP_FROM)
-OFFICE_CC = os.getenv("OFFICE_CC", "ceo@canhouse.jp")
+OFFICE_CC = os.getenv("OFFICE_CC", "kzmlll@hotmail.com")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
