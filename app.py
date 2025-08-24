@@ -467,9 +467,10 @@ def schedule_daily_followup():
                 "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
                 "初回は３クール（90日分＝180錠）をお届けします。\n"
                 "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
-                "※半年ごとに定期問診を行います（無料）。"
+                "※半年ごとに定期問診を行います（無料）。\n\n"
+                "ご購入はこちらから\n"
+                "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
             )
-
             line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
             del completed_users[uid]
 
