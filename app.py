@@ -27,23 +27,25 @@ SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
 SMTP_PASS = os.getenv("SMTP_PASS", "hadfi0609")
 SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
 
+OFFICE_TO = os.getenv("OFFICE_TO", SMTP_FROM)
+OFFICE_CC = os.getenv("OFFICE_CC", "ceo@canhouse.jp")
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ====== 状態管理 ======
-user_states = {}                 # user_id -> dict(回答ステート)
-completed_users = {}             # user_id -> (完了日時, サマリー文字列)
+user_states = {}
+completed_users = {}
 
-# ====== 質問フロー（ご指定順） ======
+# ====== 質問フロー ======
 QUESTION_STEPS = [
     "都道府県", "お名前", "フリガナ", "電話番号",
-    "生年月日_年", "生年月日_月", "生年月日_日",  # 満年齢は自動算出
+    "生年月日_年", "生年月日_月", "生年月日_日",
     "性別", "身長", "体重",
     "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気",
-    "病名",                         # 「その他病気=はい」のときのみ
-    "お薬服用", "服用薬",           # 「お薬服用=はい」のときのみ
-    "アレルギー", "アレルギー名"    # 「アレルギー=はい」のときのみ
-    # ※ メールアドレスは任意: 使う場合は別途質問を追加してください
+    "病名",
+    "お薬服用", "服用薬",
+    "アレルギー", "アレルギー名"
 ]
 
 def get_next_question(state):
@@ -58,59 +60,41 @@ def get_next_question(state):
             return step
     return None
 
-# ====== メール送信（管理者 & 本人） ======
-def send_summary_email_to_admin_and_user(summary, user_id, user_email):
-    subject_admin = "東京MITクリニック 妊活オンライン診療：問診を受け付けました"
-    subject_user = "東京MITクリニック 妊活オンライン診療：問診のご確認"
-
+# ====== メール送信（事務局のみ） ======
+def send_summary_email_to_office(summary, user_id):
+    subject_admin = "東京MITクリニック 妊活オンライン診療：問診を受け付けました（事務局通知）"
     msg_admin = EmailMessage()
     msg_admin["Subject"] = subject_admin
     msg_admin["From"] = SMTP_USER
-    msg_admin["To"] = SMTP_FROM
-    msg_admin["Cc"] = "ceo@canhouse.jp"  # 固定CC
-    msg_admin.set_content(f"以下の内容で新規受付がありました。\n\nユーザーID: {user_id}\n\n{summary}")
+    msg_admin["To"] = OFFICE_TO
+    if OFFICE_CC:
+        msg_admin["Cc"] = OFFICE_CC
 
-    msg_user = None
-    if user_email:
-        msg_user = EmailMessage()
-        msg_user["Subject"] = subject_user
-        msg_user["From"] = SMTP_USER
-        msg_user["To"] = user_email
-        msg_user.set_content(
-            f"{ACCOUNT_NAME}より\n\n"
-            "以下の内容で妊活オンライン診療の問診を受け付けました。\n\n"
-            f"{summary}\n\n"
-            "医師による回答まで最大24時間をいただきますことを、ご了承ください。\n\n"
-            "このメールは自動送信です。"
-        )
+    try:
+        nickname = line_bot_api.get_profile(user_id).display_name
+    except Exception:
+        nickname = "ご利用者様"
+
+    msg_admin.set_content(
+        "以下の内容で問診の受け付けが完了しました。\n\n"
+        f"ユーザーID: {user_id}\n"
+        f"表示名: {nickname}\n\n"
+        f"{summary}"
+    )
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
             smtp.starttls()
             smtp.login(SMTP_USER, SMTP_PASS)
             smtp.send_message(msg_admin)
-            if msg_user:
-                smtp.send_message(msg_user)
     except Exception as e:
-        print("【問診結果メール送信エラー】", repr(e))
+        print("【問診結果メール送信エラー（事務局）】", repr(e))
 
-# ====== 初期化（/新規登録, /問診） ======
+# ====== 初期化 ======
 def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.pop(user_id, None)
-    try:
-        nickname = line_bot_api.get_profile(user_id).display_name
-    except Exception:
-        nickname = "ご利用者様"
-
-    greeting = (
-        f"{nickname}様\n\n"
-        f"{ACCOUNT_NAME}でございます。\n"
-        "このたびはご登録くださり、誠にありがとうございます。\n"
-        "オンライン診療（問診）にお進みください。"
-    )
-    line_bot_api.reply_message(reply_token, TextSendMessage(text=greeting))
-    line_bot_api.push_message(user_id, TextSendMessage(text="お住まいの都道府県名を入力してください。"))
+    line_bot_api.reply_message(reply_token, TextSendMessage(text="お住まいの都道府県名を入力してください。"))
 
 # ====== Flexボタン送信 ======
 def send_buttons(reply_token, text, buttons):
@@ -146,28 +130,25 @@ def handle_follow(event):
     user_id = event.source.user_id
     start_registration(user_id, event.reply_token)
 
-# ====== テキスト受信（入力フロー） ======
+# ====== テキスト受信 ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
-    # リセット
     if text == "リセット":
         user_states.pop(user_id, None)
         completed_users.pop(user_id, None)
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
         return
 
-    # 開始（テスト用に残す）
     if text in ("新規登録", "問診"):
         start_registration(user_id, event.reply_token)
         return
 
     step = get_next_question(state)
 
-    # ====== 各ステップ ======
     if step == "都道府県":
         state["都道府県"] = text
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご氏名（保険証と同じお名前を漢字フルネーム）を入力してください。"))
@@ -221,7 +202,6 @@ def handle_text(event):
                 today = date.today()
                 age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
                 state["満年齢"] = age
-                # 性別をボタンで
                 send_buttons(event.reply_token, "性別を選択してください。", [
                     {"label": "女", "data": "gender_female"},
                     {"label": "男", "data": "gender_male"}
@@ -243,7 +223,6 @@ def handle_text(event):
     if step == "体重":
         if text.isdigit() and 20 <= int(text) <= 200:
             state["体重"] = f"{int(text)}"
-            # アルコール
             send_buttons(event.reply_token, "アルコールを常習的に摂取していますか？", [
                 {"label": "はい", "data": "alcohol_yes"},
                 {"label": "いいえ", "data": "alcohol_no"}
@@ -255,7 +234,6 @@ def handle_text(event):
     if step == "病名":
         if text:
             state["病名"] = text
-            # お薬服用
             send_buttons(event.reply_token, "現在、お薬を服用していますか？", [
                 {"label": "はい", "data": "med_yes"},
                 {"label": "いいえ", "data": "med_no"}
@@ -267,7 +245,6 @@ def handle_text(event):
     if step == "服用薬":
         if text:
             state["服用薬"] = text
-            # アレルギー
             send_buttons(event.reply_token, "アレルギーはありますか？", [
                 {"label": "はい", "data": "allergy_yes"},
                 {"label": "いいえ", "data": "allergy_no"}
@@ -284,10 +261,9 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名を入力してください。"))
         return
 
-    # デフォルト
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
 
-# ====== ポストバック処理（ボタン） ======
+# ====== ポストバック処理 ======
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
@@ -317,7 +293,6 @@ def handle_postback(event):
         key, val = mapping[data]
         state[key] = val
 
-    # 分岐の流れ
     if data in ("gender_female", "gender_male"):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長（cm）を入力してください。"))
         return
@@ -379,24 +354,29 @@ def handle_postback(event):
 
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
-    # 表示用の並び順で整形
     ordered_keys = [
         "都道府県", "お名前", "フリガナ", "電話番号",
-        "生年月日", "満年齢", "性別", "身長", "体重",
+        "生年月日", "性別", "身長", "体重",
         "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気",
-        "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名", "メールアドレス"
+        "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名"
     ]
 
-    # 生年月日が分割で入っていれば整える
     if "生年月日" not in state and all(k in state for k in ("生年月日_年", "生年月日_月", "生年月日_日")):
         birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
 
-    # メールアドレスは任意（使う場合は別途収集）
-    state.setdefault("メールアドレス", "")
-
     lines = []
+    name = state.get("お名前")
+    furigana = state.get("フリガナ")
+    if name:
+        if furigana:
+            lines.append(f"お名前: {name}（{furigana}）")
+        else:
+            lines.append(f"お名前: {name}")
+
     for k in ordered_keys:
+        if k in ("お名前", "フリガナ"):
+            continue
         if k not in state:
             continue
         v = state[k]
@@ -411,40 +391,32 @@ def finalize_response(event, user_id, state):
             lines.append(f"身長: {v} cm")
         elif k == "体重":
             lines.append(f"体重: {v} kg")
-        elif k == "満年齢":
-            lines.append(f"満年齢: {v} 歳")
         else:
             lines.append(f"{k}: {v}")
 
     summary_text = "\n".join(lines)
 
-    # ユーザー名
     try:
         nickname = line_bot_api.get_profile(user_id).display_name
     except Exception:
         nickname = "ご利用者様"
 
-    # --- 問診完了直後のユーザー宛メッセージ（ご指定文） ---
     user_message = (
         f"{nickname}様\n"
         "ご回答、ありがとうございました。\n"
         "以下がご入力いただいた内容になりますので、ご確認ください。\n\n"
         f"{summary_text}\n\n"
         "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事いたします。\n"
-        "医師による回答まで最大24時間をいただきますことを、ご了承ください。"
+        "医師による回答までに最大24時間（翌日午前9時までに回答）をいただきますことを、ご了承ください。"
     )
 
-    # 返信 & メール送信
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=user_message))
-    send_summary_email_to_admin_and_user(summary_text, user_id, state.get("メールアドレス", ""))
+    send_summary_email_to_office(summary_text, user_id)
 
-    # 翌朝9時の自動送信用に完了時刻を保存
     completed_users[user_id] = (datetime.now(), summary_text)
-
-    # ステート破棄
     user_states.pop(user_id, None)
 
-# ====== 翌朝9時の自動送信（宇野医師メッセージ） ======
+# ====== 翌朝9時の自動送信 ======
 def schedule_daily_followup():
     now = datetime.now()
     yesterday = now.date() - timedelta(days=1)
@@ -471,11 +443,12 @@ def schedule_daily_followup():
                 "ご購入はこちらから\n"
                 "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
             )
+
             line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
             del completed_users[uid]
 
-# APScheduler 起動（毎日9:00に実行）
-scheduler = BackgroundScheduler()
+# APScheduler 起動
+scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
 scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
 scheduler.start()
 
@@ -497,5 +470,4 @@ def admin_reset():
     return "All states reset", 200
 
 if __name__ == "__main__":
-    # Renderなどでは host/port の指定が必要なことがあります
     app.run()
