@@ -21,7 +21,7 @@ git push origin main
 cd ~/Desktop/my-line-bot
 
 git add .
-git commit -m "最新のアンケート機能を追加"
+git commit -m "テスト送信実行対応とハートビート追加"
 git push origin main
 
 
