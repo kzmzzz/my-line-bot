@@ -22,50 +22,33 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
 
+# SMTP
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
-# From は到達性のため SMTP_USER と同一にする（サーバのポリシーに沿う）
+# 到達性のため From は認証ユーザーと同一を推奨
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
-SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0") == "1"   # 1なら SMTPS(465)
-SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1ならSMTPプロトコルログ
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0") == "1"   # 1=465/SSL, 0=587/STARTTLS
+SMTP_DEBUG = os.getenv("SMTP_DEBUG", "0") == "1"       # 1でSMTP詳細ログ
 
-# 事務局宛先（デフォルトは website@eel.style のみ）
+# 事務局宛先
 OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
-OFFICE_CC = os.getenv("OFFICE_CC", "kzmlll@hotmail.com")  # 空ならCCなし
+OFFICE_CC = os.getenv("OFFICE_CC", "")  # 空ならCCなし
 
-# メールテスト機能の制御
+# メールテスト機能（任意宛先送信は管理者のみ）
 MAIL_TEST_ENABLED = os.getenv("MAIL_TEST_ENABLED", "0") == "1"
 ADMIN_USER_IDS = [u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") if u.strip()]
 
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
-
-# ====== 環境変数 ======
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
-
-SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
-
-OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
-OFFICE_CC = os.getenv("OFFICE_CC", "")
-
-# ====== フォローアップ送信のテスト切替 ======
+# フォローアップ送信のテスト切替
 FOLLOWUP_TEST_MODE = os.getenv("FOLLOWUP_TEST_MODE", "0") == "1"
-TEST_SEND_HOUR   = int(os.getenv("TEST_SEND_HOUR", "6"))
-TEST_SEND_MINUTE = int(os.getenv("TEST_SEND_MINUTE", "50"))
+TEST_SEND_HOUR     = int(os.getenv("TEST_SEND_HOUR", "6"))
+TEST_SEND_MINUTE   = int(os.getenv("TEST_SEND_MINUTE", "50"))
 TEST_CUTOFF_HOUR   = int(os.getenv("TEST_CUTOFF_HOUR", "6"))
 TEST_CUTOFF_MINUTE = int(os.getenv("TEST_CUTOFF_MINUTE", "45"))
 
-
-
-
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ====== 状態管理 ======
 user_states = {}                 # user_id -> dict(回答ステート)
@@ -162,7 +145,7 @@ def send_summary_email_to_office(summary, user_id):
     except Exception as e:
         print("【問診結果メール送信エラー（事務局）】", repr(e))
 
-# ====== （新規）メールテスト送信 ======
+# ====== テスト送信（メールテスト） ======
 def send_test_email(to_addr: str, body: str, user_id: str):
     subject = "【テスト送信】東京MITクリニック 妊活オンライン診療"
     msg = EmailMessage()
@@ -236,7 +219,7 @@ def handle_text(event):
     text = event.message.text.strip()
     state = user_states.setdefault(user_id, {})
 
-    # 🔹誰からでも利用可：「メールテスト [本文任意]」 -> 事務局(OFFICE_TO)に送信
+    # 🔹誰でも：「メールテスト [本文任意]」 -> 事務局(OFFICE_TO)に送信
     if text.startswith("メールテスト"):
         body = text[len("メールテスト"):].strip() or "動作確認テスト送信"
         ok, err = send_test_email(OFFICE_TO, body, user_id)
@@ -251,11 +234,6 @@ def handle_text(event):
                 TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {err}")
             )
         return
-
-    # （任意）自分のUser ID確認
-    # if text == "マイID":
-    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"あなたのUser IDは:\n{user_id}"))
-    #     return
 
     # 🔒管理者のみ：「メール <宛先> <本文>」 -> 任意宛先に送信（簡易バリデーション）
     if is_admin(user_id) and text.startswith("メール "):
@@ -274,10 +252,6 @@ def handle_text(event):
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="使い方：\nメール test@example.com 本文"))
         return
-
-    # －－この下は従来どおりのリセット/新規登録/問診フロー－－
-    # ...
-    # ---- ここまでメールテスト ----
 
     # リセット
     if text == "リセット":
@@ -568,49 +542,49 @@ def finalize_response(event, user_id, state):
 def schedule_daily_followup():
     now = datetime.now()
     if FOLLOWUP_TEST_MODE:
-        # 例：当日 06:45 以前に完了した人へ送る（06:50に実行）
         cutoff = datetime.combine(now.date(), time(TEST_CUTOFF_HOUR, TEST_CUTOFF_MINUTE))
+        mode = "TEST"
     else:
-        # 本番：前日 23:59:59 以前に完了した人へ、翌朝9:00に送る
         yesterday = now.date() - timedelta(days=1)
         cutoff = datetime.combine(yesterday, time(23, 59, 59))
+        mode = "PROD"
 
-    for uid, (finished_at, _summary_text) in list(completed_users.items()):
-        if finished_at <= cutoff:
-            try:
-                nickname = line_bot_api.get_profile(uid).display_name
-            except Exception:
-                nickname = "ご利用者様"
+    targets = [uid for uid, (finished_at, _) in completed_users.items() if finished_at <= cutoff]
+    print(f"[Followup:{mode}] now={now:%Y-%m-%d %H:%M:%S} cutoff={cutoff:%Y-%m-%d %H:%M:%S} targets={len(targets)}")
 
-            followup_text = (
-                f"{nickname}様の問診内容を確認しました。\n"
-                "GHRP-2を定期的に服用されることについて、問題はありません。\n"
-                "処方の手続きにお進みください。\n"
-                "処方計画は次のとおりです。\n"
-                "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
-                "１クール　30日分\n"
-                "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
-                "初回は３クール（90日分＝180錠）をお届けします。\n"
-                "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
-                "※半年ごとに定期問診を行います（無料）。\n\n"
-                "ご購入はこちらから\n"
-                "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
-            )
+    for uid in targets:
+        try:
+            nickname = line_bot_api.get_profile(uid).display_name
+        except Exception:
+            nickname = "ご利用者様"
 
-            line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
-            del completed_users[uid]
+        followup_text = (
+            f"{nickname}様の問診内容を確認しました。\n"
+            "GHRP-2を定期的に服用されることについて、問題はありません。\n"
+            "処方の手続きにお進みください。\n"
+            "処方計画は次のとおりです。\n"
+            "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
+            "１クール　30日分\n"
+            "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
+            "初回は３クール（90日分＝180錠）をお届けします。\n"
+            "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
+            "※半年ごとに定期問診を行います（無料）。\n\n"
+            "ご購入はこちらから\n"
+            "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
+        )
 
+        line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
+        del completed_users[uid]
 
-# APScheduler 起動（JST）
+# ====== APScheduler 起動（JST） ======
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
 if FOLLOWUP_TEST_MODE:
-    # 例：当日 06:50 に実行
     scheduler.add_job(schedule_daily_followup, 'cron', hour=TEST_SEND_HOUR, minute=TEST_SEND_MINUTE)
+    print(f"[Followup] MODE=TEST  cutoff={TEST_CUTOFF_HOUR:02d}:{TEST_CUTOFF_MINUTE:02d}  send={TEST_SEND_HOUR:02d}:{TEST_SEND_MINUTE:02d} JST")
 else:
-    # 本番：毎日 09:00 に実行
     scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
+    print("[Followup] MODE=PROD  cutoff=23:59  send=09:00 JST")
 scheduler.start()
-
 
 # ====== ルーティング ======
 @app.route("/callback", methods=["POST"])
