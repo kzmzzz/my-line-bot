@@ -24,9 +24,9 @@ ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
-SMTP_PASS = os.getenv("SMTP_PASS", "")                         # ← パスは環境変数で
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)                  # 差出人
-OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")        # 事務局宛
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
 
 # テストモード（JST）
 FOLLOWUP_TEST_MODE = os.getenv("FOLLOWUP_TEST_MODE", "0") == "1"
@@ -137,10 +137,36 @@ def handle_text(event):
 
     print(f"[MSG] user={user_id} text={repr(text)}")
 
-    # ---- 手動フォローアップ送信（どちらの表現でもOK）----
+    # ---- 手動フォローアップ送信（本番/テスト問わず即送信）----
     norm = text.replace("　", " ").strip()
     if any(t in norm for t in {"テスト送信実行", "送信テスト実行"}) or norm.lower() in {"test", "sendnow", "runfollowup"}:
-        schedule_daily_followup()
+        # 現在 completed_users に居るユーザーへ強制送信
+        targets = list(completed_users.keys())
+        print(f"[Followup:TEST] now={datetime.now():%Y-%m-%d %H:%M:%S} targets={len(targets)} (force-send)")
+        for uid in targets:
+            try:
+                nickname = line_bot_api.get_profile(uid).display_name
+            except Exception:
+                nickname = "ご利用者様"
+
+            followup_text = (
+                f"{nickname}様の問診内容を確認しました。\n"
+                "GHRP-2を定期的に服用されることについて、問題はありません。\n"
+                "処方の手続きにお進みください。\n"
+                "処方計画は次のとおりです。\n"
+                "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
+                "１クール　30日分\n"
+                "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
+                "初回は３クール（90日分＝180錠）をお届けします。\n"
+                "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
+                "※半年ごとに定期問診を行います（無料）。\n\n"
+                "ご購入はこちらから\n"
+                "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
+            )
+            line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
+            # 本番の送信と同じ扱いでキューから外す
+            completed_users.pop(uid, None)
+
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="フォローアップ送信を手動実行しました。ログを確認してください。"))
         return
 
@@ -243,7 +269,6 @@ def handle_text(event):
         return
 
     if step == "性別":
-        # ここには来ない（ボタンで処理）
         send_buttons(event.reply_token, "性別を選択してください。", [
             {"label": "女", "data": "gender_female"},
             {"label": "男", "data": "gender_male"}
