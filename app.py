@@ -155,28 +155,47 @@ def handle_text(event):
         state["都道府県"] = text
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご氏名（保険証と同じお名前を漢字フルネーム）を入力してください。"))
         return
-    # …（途中の質問処理は省略、元のソースと同じ）…
 
-    if step == "アレルギー名":
-        if text:
-            state["アレルギー名"] = text
-            finalize_response(event, user_id, state)
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名を入力してください。"))
+    if step == "お名前":
+        state["お名前"] = text
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="フリガナ（カタカナ）を入力してください。"))
         return
+
+    if step == "フリガナ":
+        state["フリガナ"] = text
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="お電話番号（ハイフンなし）を入力してください。"))
+        return
+
+    if step == "電話番号":
+        if text.isdigit() and len(text) in (10, 11):
+            state["電話番号"] = text
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた西暦（4桁）を入力してください。"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。"))
+        return
+
+    # …（以降の処理は元のまま）…
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
 
 # ====== ポストバック処理 ======
 @handler.add(PostbackEvent)
 def handle_postback(event):
-    # …（省略、元のソースと同じ）…
-    pass
+    pass  # 省略、元のまま
 
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
-    # …（サマリ生成処理は元のソースと同じ、フリガナを名前の横に表示・メール送信は事務局のみ）…
-    summary_text = "..."  # 実際は生成処理
+    # （サマリ生成処理は元のまま、名前＋フリガナは お名前（フリガナ）の形で表示）
+
+    lines = []
+    if "お名前" in state:
+        name_line = state["お名前"]
+        if "フリガナ" in state:
+            name_line += f"（{state['フリガナ']}）"
+        lines.append(f"お名前: {name_line}")
+    # …（他の項目も整形してlinesに追加）…
+
+    summary_text = "\n".join(lines)
 
     try:
         nickname = line_bot_api.get_profile(user_id).display_name
@@ -198,7 +217,7 @@ def finalize_response(event, user_id, state):
     completed_users[user_id] = (datetime.now(), summary_text)
     user_states.pop(user_id, None)
 
-# ====== 翌朝9時の自動送信 ======
+# ====== フォローアップ ======
 def schedule_daily_followup():
     now = datetime.now()
     if FOLLOWUP_TEST_MODE:
