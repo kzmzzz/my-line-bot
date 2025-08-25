@@ -11,9 +11,9 @@ from email.message import EmailMessage
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta, time
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
+
 app = Flask(__name__)
 
 # ====== 環境変数 ======
@@ -25,22 +25,16 @@ SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "website@eel.style")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
-OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")
-
-# テストモード（JST）
-FOLLOWUP_TEST_MODE = os.getenv("FOLLOWUP_TEST_MODE", "0") == "1"
-TEST_CUTOFF_HOUR   = int(os.getenv("TEST_CUTOFF_HOUR", "6"))
-TEST_CUTOFF_MINUTE = int(os.getenv("TEST_CUTOFF_MINUTE", "45"))
-TEST_SEND_HOUR     = int(os.getenv("TEST_SEND_HOUR", "6"))
-TEST_SEND_MINUTE   = int(os.getenv("TEST_SEND_MINUTE", "50"))
+SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
+OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")  # 事務局宛
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ====== 状態管理（メモリ） ======
-user_states = {}       # user_id -> dict(回答)
-completed_users = {}   # user_id -> (完了日時, サマリー文字列)
+# ====== 状態管理 ======
+user_states = {}                 # user_id -> dict(回答ステート)
+completed_users = {}             # user_id -> (完了日時, サマリー文字列)
+greeted_users = set()            # Follow受信 or 初回発言で案内済み
 
 # ====== 質問フロー ======
 QUESTION_STEPS = [
@@ -48,11 +42,12 @@ QUESTION_STEPS = [
     "生年月日_年", "生年月日_月", "生年月日_日",
     "性別", "身長", "体重",
     "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気",
-    "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名"
+    "病名",                     # 「その他病気=はい」のときのみ
+    "お薬服用", "服用薬",       # 「お薬服用=はい」のときのみ
+    "アレルギー", "アレルギー名" # 「アレルギー=はい」のときのみ
 ]
 
 def get_next_question(state):
-    """次に聞くべきキーを返す（分岐も考慮）"""
     for step in QUESTION_STEPS:
         if step == "病名" and state.get("その他病気") != "はい":
             continue
@@ -64,7 +59,7 @@ def get_next_question(state):
             return step
     return None
 
-# ====== メール（事務局のみ） ======
+# ====== メール送信（事務局通知） ======
 def send_summary_email_to_office(summary, user_id):
     subject = "東京MITクリニック 妊活オンライン診療：問診を受け付けました（事務局通知）"
     msg = EmailMessage()
@@ -98,18 +93,25 @@ def send_summary_email_to_office(summary, user_id):
     except Exception as e:
         print("【問診結果メール送信エラー（事務局）】", repr(e))
 
-# ====== 初期化 ======
+# ====== 初期化（開始メッセージ） ======
 def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.pop(user_id, None)
+    try:
+        _nickname = line_bot_api.get_profile(user_id).display_name
+    except Exception:
+        _nickname = "ご利用者様"
     line_bot_api.reply_message(reply_token, TextSendMessage(text="お住まいの都道府県名を入力してください。"))
 
-# ====== Follow（友だち追加） ======
+# ====== 友だち追加で即開始（取りこぼし対策：案内済みフラグ） ======
 @handler.add(FollowEvent)
 def handle_follow(event):
-    start_registration(event.source.user_id, event.reply_token)
+    uid = event.source.user_id
+    print(f"[EVT] FollowEvent from {uid}")
+    greeted_users.add(uid)
+    start_registration(uid, event.reply_token)
 
-# ====== Flexボタン ======
+# ====== Flexボタン送信 ======
 def send_buttons(reply_token, text, buttons):
     contents = {
         "type": "bubble",
@@ -119,14 +121,23 @@ def send_buttons(reply_token, text, buttons):
             "contents": [
                 {"type": "text", "text": text, "wrap": True, "weight": "bold", "size": "md"},
                 *[
-                    {"type": "button", "style": "primary", "margin": "sm",
-                     "action": {"type": "postback", "label": b["label"], "data": b["data"], "displayText": b["label"]}}
-                    for b in buttons
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "margin": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": b["label"],
+                            "data": b["data"],
+                            "displayText": b["label"]
+                        }
+                    } for b in buttons
                 ]
             ]
         }
     }
-    line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text=text, contents=contents))
+    message = FlexSendMessage(alt_text=text, contents=contents)
+    line_bot_api.reply_message(reply_token, message)
 
 # ====== テキスト受信 ======
 @handler.add(MessageEvent, message=TextMessage)
@@ -137,42 +148,30 @@ def handle_text(event):
 
     print(f"[MSG] user={user_id} text={repr(text)}")
 
-    # ---- 手動フォローアップ送信（本番/テスト問わず即送信）----
-    norm = text.replace("　", " ").strip()
-    if any(t in norm for t in {"テスト送信実行", "送信テスト実行"}) or norm.lower() in {"test", "sendnow", "runfollowup"}:
-        # 現在 completed_users に居るユーザーへ強制送信
-        targets = list(completed_users.keys())
-        print(f"[Followup:TEST] now={datetime.now():%Y-%m-%d %H:%M:%S} targets={len(targets)} (force-send)")
-        for uid in targets:
-            try:
-                nickname = line_bot_api.get_profile(uid).display_name
-            except Exception:
-                nickname = "ご利用者様"
-
-            followup_text = (
-                f"{nickname}様の問診内容を確認しました。\n"
-                "GHRP-2を定期的に服用されることについて、問題はありません。\n"
-                "処方の手続きにお進みください。\n"
-                "処方計画は次のとおりです。\n"
-                "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
-                "１クール　30日分\n"
-                "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
-                "初回は３クール（90日分＝180錠）をお届けします。\n"
-                "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
-                "※半年ごとに定期問診を行います（無料）。\n\n"
-                "ご購入はこちらから\n"
-                "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
-            )
-            line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
-            # 本番の送信と同じ扱いでキューから外す
-            completed_users.pop(uid, None)
-
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="フォローアップ送信を手動実行しました。ログを確認してください。"))
+    # --- フォールバック：FollowEvent取りこぼし時、初回発言で開始 ---
+    if (user_id not in greeted_users) and (not state) and (user_id not in completed_users):
+        print(f"[FALLBACK] start on first message: uid={user_id}")
+        greeted_users.add(user_id)
+        start_registration(user_id, event.reply_token)
         return
 
-    # ---- メールテスト（誰が送っても事務局へ）----
-    if norm.startswith("メールテスト"):
-        body = norm[len("メールテスト"):].strip() or "動作確認テスト送信"
+    # === 管理用コマンド ===
+    if text == "リセット":
+        user_states.pop(user_id, None)
+        completed_users.pop(user_id, None)
+        greeted_users.discard(user_id)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
+        return
+
+    # 手動開始（テスト用）
+    if text in ("新規登録", "問診"):
+        greeted_users.add(user_id)
+        start_registration(user_id, event.reply_token)
+        return
+
+    # 事務局にテストメール送信（誰が送ってもOK）
+    if text.startswith("メールテスト"):
+        body = text[len("メールテスト"):].strip() or "動作確認テスト送信"
         try:
             msg = EmailMessage()
             msg["Subject"] = "【テスト送信】東京MITクリニック 妊活オンライン診療"
@@ -194,17 +193,18 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {repr(e)}"))
         return
 
-    # ---- リセット / 手動開始 ----
-    if text == "リセット":
-        user_states.pop(user_id, None)
-        completed_users.pop(user_id, None)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
-        return
-    if text in ("新規登録", "問診"):
-        start_registration(user_id, event.reply_token)
+    # フォローアップ手動送信（即時）
+    if text in {"テスト送信実行", "送信テスト実行"} or text.lower() in {"test", "sendnow", "runfollowup"}:
+        sent = 0
+        for uid, (_finished_at, _summary_text) in list(completed_users.items()):
+            send_followup(uid)
+            del completed_users[uid]
+            sent += 1
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"フォローアップ送信を手動実行しました。targets={sent}"))
+        print(f"[Followup:FORCE] now={datetime.now():%Y-%m-%d %H:%M:%S} targets={sent}")
         return
 
-    # ここから質問フロー
+    # ====== フロー進行 ======
     step = get_next_question(state)
 
     if step == "都道府県":
@@ -231,11 +231,13 @@ def handle_text(event):
         return
 
     if step == "生年月日_年":
-        if text.isdigit() and len(text) == 4 and 1900 <= int(text) <= 2100:
-            state["生年月日_年"] = int(text)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた月（1〜12）を入力してください。"))
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="西暦4桁で入力してください（例：1988）"))
+        if text.isdigit() and len(text) == 4:
+            y = int(text)
+            if 1900 <= y <= 2100:
+                state["生年月日_年"] = y
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた月（1〜12）を入力してください。"))
+                return
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="西暦4桁で入力してください（例：1988）"))
         return
 
     if step == "生年月日_月":
@@ -258,6 +260,7 @@ def handle_text(event):
                 today = date.today()
                 age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
                 state["満年齢"] = age
+                # 性別ボタン
                 send_buttons(event.reply_token, "性別を選択してください。", [
                     {"label": "女", "data": "gender_female"},
                     {"label": "男", "data": "gender_male"}
@@ -269,6 +272,7 @@ def handle_text(event):
         return
 
     if step == "性別":
+        # 念のためボタン提示
         send_buttons(event.reply_token, "性別を選択してください。", [
             {"label": "女", "data": "gender_female"},
             {"label": "男", "data": "gender_male"}
@@ -286,6 +290,7 @@ def handle_text(event):
     if step == "体重":
         if text.isdigit() and 20 <= int(text) <= 200:
             state["体重"] = f"{int(text)}"
+            # アルコール
             send_buttons(event.reply_token, "アルコールを常習的に摂取していますか？", [
                 {"label": "はい", "data": "alcohol_yes"},
                 {"label": "いいえ", "data": "alcohol_no"}
@@ -294,9 +299,31 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重は20〜200の数字で入力してください。"))
         return
 
+    if step == "アルコール":
+        # ここはボタン回答のみなので通常は到達しない
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
+    if step == "副腎皮質ホルモン剤":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
+    if step == "がん":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
+    if step == "糖尿病":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
+    if step == "その他病気":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
     if step == "病名":
         if text:
             state["病名"] = text
+            # お薬服用
             send_buttons(event.reply_token, "現在、お薬を服用していますか？", [
                 {"label": "はい", "data": "med_yes"},
                 {"label": "いいえ", "data": "med_no"}
@@ -305,15 +332,24 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="病名（不明なら治療内容）を入力してください。"))
         return
 
+    if step == "お薬服用":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+        return
+
     if step == "服用薬":
         if text:
             state["服用薬"] = text
+            # アレルギー
             send_buttons(event.reply_token, "アレルギーはありますか？", [
                 {"label": "はい", "data": "allergy_yes"},
                 {"label": "いいえ", "data": "allergy_no"}
             ])
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="服用薬の名称を入力してください。"))
+        return
+
+    if step == "アレルギー":
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
         return
 
     if step == "アレルギー名":
@@ -324,10 +360,10 @@ def handle_text(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名を入力してください。"))
         return
 
-    # 予期せぬ入力
+    # デフォルト
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
 
-# ====== ポストバック（ボタン） ======
+# ====== ポストバック処理（ボタン） ======
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
@@ -352,10 +388,12 @@ def handle_postback(event):
         "allergy_yes":   ("アレルギー", "はい"),
         "allergy_no":    ("アレルギー", "いいえ"),
     }
+
     if data in mapping:
         key, val = mapping[data]
         state[key] = val
 
+    # 分岐の流れ
     if data in ("gender_female", "gender_male"):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長（cm）を入力してください。"))
         return
@@ -417,12 +455,11 @@ def handle_postback(event):
 
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
-    # 生年月日統合
+    # 生年月日が分割で入っていれば整える
     if "生年月日" not in state and all(k in state for k in ("生年月日_年", "生年月日_月", "生年月日_日")):
         birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
 
-    # 表示順
     ordered_keys = [
         "都道府県", "お名前", "フリガナ", "電話番号",
         "生年月日", "性別", "身長", "体重",
@@ -430,9 +467,8 @@ def finalize_response(event, user_id, state):
         "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名"
     ]
 
-    # 整形
     lines = []
-    # お名前（フリガナ）をまとめて一行
+    # お名前（フリガナ）を最初に
     if "お名前" in state:
         if "フリガナ" in state:
             lines.append(f"お名前: {state['お名前']}（{state['フリガナ']}）")
@@ -461,11 +497,13 @@ def finalize_response(event, user_id, state):
 
     summary_text = "\n".join(lines)
 
+    # ニックネーム
     try:
         nickname = line_bot_api.get_profile(user_id).display_name
     except Exception:
         nickname = "ご利用者様"
 
+    # 問診完了メッセージ
     user_message = (
         f"{nickname}様\n"
         "ご回答、ありがとうございました。\n"
@@ -475,61 +513,55 @@ def finalize_response(event, user_id, state):
         "医師による回答までに最大24時間（翌日午前9時までに回答）をいただきますことを、ご了承ください。"
     )
 
+    # 返信 & 事務局メール送信
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=user_message))
     send_summary_email_to_office(summary_text, user_id)
 
+    # 翌朝送信用に完了時刻を保存
     completed_users[user_id] = (datetime.now(), summary_text)
+
+    # ステート破棄
     user_states.pop(user_id, None)
 
-# ====== フォローアップ自動送信 ======
+# ====== フォローアップ送信（本文） ======
+def send_followup(uid):
+    try:
+        nickname = line_bot_api.get_profile(uid).display_name
+    except Exception:
+        nickname = "ご利用者様"
+
+    followup_text = (
+        f"{nickname}様の問診内容を確認しました。\n"
+        "GHRP-2を定期的に服用されることについて、問題はありません。\n"
+        "処方の手続きにお進みください。\n"
+        "処方計画は次のとおりです。\n"
+        "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
+        "１クール　30日分\n"
+        "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
+        "初回は３クール（90日分＝180錠）をお届けします。\n"
+        "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
+        "※半年ごとに定期問診を行います（無料）。\n\n"
+        "ご購入はこちらから\n"
+        "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
+    )
+    line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
+
+# ====== 翌朝9時の自動送信（23:59締切分を配信） ======
 def schedule_daily_followup():
     now = datetime.now()
-    if FOLLOWUP_TEST_MODE:
-        cutoff = datetime.combine(now.date(), time(TEST_CUTOFF_HOUR, TEST_CUTOFF_MINUTE))
-        mode = "TEST"
-    else:
-        yesterday = now.date() - timedelta(days=1)
-        cutoff = datetime.combine(yesterday, time(23, 59, 59))
-        mode = "PROD"
+    yesterday = now.date() - timedelta(days=1)
+    cutoff = datetime.combine(yesterday, time(23, 59, 59))
 
-    targets = [uid for uid, (finished_at, _) in completed_users.items() if finished_at <= cutoff]
-    print(f"[Followup:{mode}] now={now:%Y-%m-%d %H:%M:%S} cutoff={cutoff:%Y-%m-%d %H:%M:%S} targets={len(targets)}")
+    targets = [uid for uid, (finished_at, _summary_text) in completed_users.items() if finished_at <= cutoff]
+    print(f"[Followup] now={now:%Y-%m-%d %H:%M:%S} cutoff={cutoff:%Y-%m-%d %H:%M:%S} targets={len(targets)}")
 
     for uid in targets:
-        try:
-            nickname = line_bot_api.get_profile(uid).display_name
-        except Exception:
-            nickname = "ご利用者様"
-
-        followup_text = (
-            f"{nickname}様の問診内容を確認しました。\n"
-            "GHRP-2を定期的に服用されることについて、問題はありません。\n"
-            "処方の手続きにお進みください。\n"
-            "処方計画は次のとおりです。\n"
-            "この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
-            "１クール　30日分\n"
-            "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
-            "初回は３クール（90日分＝180錠）をお届けします。\n"
-            "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
-            "※半年ごとに定期問診を行います（無料）。\n\n"
-            "ご購入はこちらから\n"
-            "https://70vhnafm3wj1pjo0yitq.stores.jp/items/68649249b7ac333809c9545b"
-        )
-        line_bot_api.push_message(uid, TextSendMessage(text=followup_text))
+        send_followup(uid)
         del completed_users[uid]
 
-def _heartbeat():
-    print(f"[HB] {datetime.now():%Y-%m-%d %H:%M:%S} scheduler alive (test_mode={FOLLOWUP_TEST_MODE})")
-
-# ====== スケジューラ（JST） ======
+# ====== APScheduler 起動（毎日9:00 JST） ======
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
-scheduler.add_job(_heartbeat, CronTrigger(minute="*/1"))  # 毎分ハートビート
-if FOLLOWUP_TEST_MODE:
-    scheduler.add_job(schedule_daily_followup, 'cron', hour=TEST_SEND_HOUR, minute=TEST_SEND_MINUTE)
-    print(f"[Followup] MODE=TEST  cutoff={TEST_CUTOFF_HOUR:02d}:{TEST_CUTOFF_MINUTE:02d}  send={TEST_SEND_HOUR:02d}:{TEST_SEND_MINUTE:02d} JST")
-else:
-    scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
-    print("[Followup] MODE=PROD  cutoff=23:59  send=09:00 JST")
+scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
 scheduler.start()
 
 # ====== ルーティング ======
@@ -547,7 +579,13 @@ def callback():
 def admin_reset():
     user_states.clear()
     completed_users.clear()
+    greeted_users.clear()
     return "All states reset", 200
+
+@app.route("/ping", methods=["GET", "HEAD"])
+def ping():
+    # ヘルスチェック / Keep-Alive 用
+    return "pong", 200
 
 if __name__ == "__main__":
     app.run()
