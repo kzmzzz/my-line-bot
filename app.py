@@ -156,57 +156,7 @@ def handle_text(event):
         return
 
 
-    # === ここからテスト環境でのコマンド実行（本番環境では削除する） ===
 
-    # === 管理用コマンド ===
-    if text == "リセット":
-        user_states.pop(user_id, None)
-        completed_users.pop(user_id, None)
-        greeted_users.discard(user_id)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="状態をリセットしました。"))
-        return
-
-    # 手動開始（テスト用）
-    if text in ("新規登録", "問診"):
-        greeted_users.add(user_id)
-        start_registration(user_id, event.reply_token)
-        return
-
-    # 事務局にテストメール送信（誰が送ってもOK）
-    if text.startswith("メールテスト"):
-        body = text[len("メールテスト"):].strip() or "動作確認テスト送信"
-        try:
-            msg = EmailMessage()
-            msg["Subject"] = "【テスト送信】東京MITクリニック 妊活オンライン診療"
-            msg["From"] = SMTP_FROM
-            msg["To"] = OFFICE_TO
-            msg.set_content(body)
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
-                smtp.ehlo()
-                try:
-                    smtp.starttls()
-                    smtp.ehlo()
-                except Exception:
-                    pass
-                if SMTP_USER and SMTP_PASS:
-                    smtp.login(SMTP_USER, SMTP_PASS)
-                smtp.send_message(msg)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"事務局宛にテストメールを送信しました。\nTo: {OFFICE_TO}"))
-        except Exception as e:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"テスト送信に失敗しました。\n原因: {repr(e)}"))
-        return
-
-    # フォローアップ手動送信（即時）
-    if text in {"テスト送信実行", "送信テスト実行"} or text.lower() in {"test", "sendnow", "runfollowup"}:
-        sent = 0
-        for uid, (_finished_at, _summary_text) in list(completed_users.items()):
-            send_followup(uid)
-            del completed_users[uid]
-            sent += 1
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"フォローアップ送信を手動実行しました。targets={sent}"))
-        print(f"[Followup:FORCE] now={datetime.now():%Y-%m-%d %H:%M:%S} targets={sent}")
-        return
-    # === ここまでテスト環境でのコマンド実行（本番環境では削除する） ===
 
 
     # ====== フロー進行 ======
