@@ -34,7 +34,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # ====== 状態管理 ======
 user_states = {}                 # user_id -> dict(回答ステート)
 completed_users = {}             # user_id -> (完了日時, サマリー文字列)
-greeted_users = set()            # Follow受信 or 初回発言で案内済み
+greeted_users = set()            # フォローアップ前に案内済み
+released_users = set()           # フォローアップ後に通常チャットへ移行したユーザー
 
 # ====== 質問フロー ======
 QUESTION_STEPS = [
@@ -98,16 +99,18 @@ def start_registration(user_id, reply_token):
     user_states[user_id] = {}
     completed_users.pop(user_id, None)
     try:
-        _nickname = line_bot_api.get_profile(user_id).display_name
+        _ = line_bot_api.get_profile(user_id).display_name
     except Exception:
-        _nickname = "ご利用者様"
-    line_bot_api.reply_message(reply_token, TextSendMessage(text="お住まいの都道府県名を入力してください。"))
+        pass
+    line_bot_api.reply_message(
+        reply_token,
+        TextSendMessage(text="お住まいの都道府県名を入力してください。")
+    )
 
-# ====== 友だち追加で即開始（取りこぼし対策：案内済みフラグ） ======
+# ====== 友だち追加で即開始 ======
 @handler.add(FollowEvent)
 def handle_follow(event):
     uid = event.source.user_id
-    print(f"[EVT] FollowEvent from {uid}")
     greeted_users.add(uid)
     start_registration(uid, event.reply_token)
 
@@ -144,45 +147,66 @@ def send_buttons(reply_token, text, buttons):
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
+
+    # フォローアップ後は通常チャットへ移行
+    if user_id in released_users:
+        return
+
+    # 問診完了後、回答待ち期間中は固定メッセージを返す
+    if user_id in completed_users:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
+        )
+        return
+
     state = user_states.setdefault(user_id, {})
 
-    print(f"[MSG] user={user_id} text={repr(text)}")
-
-    # --- フォールバック：FollowEvent取りこぼし時、初回発言で開始 ---
-    if (user_id not in greeted_users) and (not state) and (user_id not in completed_users):
-        print(f"[FALLBACK] start on first message: uid={user_id}")
+    # フォールバック：FollowEvent取りこぼし時
+    if (user_id not in greeted_users) and (not state):
         greeted_users.add(user_id)
         start_registration(user_id, event.reply_token)
         return
 
-
-
-
-
-    # ====== フロー進行 ======
+    # フロー進行
     step = get_next_question(state)
 
     if step == "都道府県":
         state["都道府県"] = text
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ご氏名（保険証と同じお名前を漢字フルネーム）を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="ご氏名（保険証と同じお名前を漢字フルネーム）を入力してください。")
+        )
         return
 
     if step == "お名前":
         state["お名前"] = text
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="フリガナ（カタカナ）を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="フリガナ（カタカナ）を入力してください。")
+        )
         return
 
     if step == "フリガナ":
         state["フリガナ"] = text
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="お電話番号（ハイフンなし）を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="お電話番号（ハイフンなし）を入力してください。")
+        )
         return
 
     if step == "電話番号":
         if text.isdigit() and len(text) in (10, 11):
             state["電話番号"] = text
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた西暦（4桁）を入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた西暦（4桁）を入力してください。")
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。")
+            )
         return
 
     if step == "生年月日_年":
@@ -190,17 +214,29 @@ def handle_text(event):
             y = int(text)
             if 1900 <= y <= 2100:
                 state["生年月日_年"] = y
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた月（1〜12）を入力してください。"))
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="生まれた月（1〜12）を入力してください。")
+                )
                 return
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="西暦4桁で入力してください（例：1988）"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="西暦4桁で入力してください（例：1988）")
+        )
         return
 
     if step == "生年月日_月":
         if text.isdigit() and 1 <= int(text) <= 12:
             state["生年月日_月"] = int(text)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="生まれた日（1〜31）を入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた日（1〜31）を入力してください。")
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="月は1〜12の数字で入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="月は1〜12の数字で入力してください。")
+            )
         return
 
     if step == "生年月日_日":
@@ -215,96 +251,107 @@ def handle_text(event):
                 today = date.today()
                 age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
                 state["満年齢"] = age
-                # 性別ボタン
-                send_buttons(event.reply_token, "性別を選択してください。", [
-                    {"label": "女", "data": "gender_female"},
-                    {"label": "男", "data": "gender_male"}
-                ])
+                send_buttons(
+                    event.reply_token,
+                    "性別を選択してください。",
+                    [
+                        {"label": "女", "data": "gender_female"},
+                        {"label": "男", "data": "gender_male"}
+                    ]
+                )
                 return
             except ValueError:
                 pass
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="正しい日付を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="正しい日付を入力してください。")
+        )
         return
 
     if step == "性別":
-        # 念のためボタン提示
-        send_buttons(event.reply_token, "性別を選択してください。", [
-            {"label": "女", "data": "gender_female"},
-            {"label": "男", "data": "gender_male"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "性別を選択してください。",
+            [
+                {"label": "女", "data": "gender_female"},
+                {"label": "男", "data": "gender_male"}
+            ]
+        )
         return
 
     if step == "身長":
         if text.isdigit() and 100 <= int(text) <= 250:
             state["身長"] = f"{int(text)}"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重（kg）を入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="体重（kg）を入力してください。")
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長は100〜250の数字で入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="身長は100〜250の数字で入力してください。")
+            )
         return
 
     if step == "体重":
         if text.isdigit() and 20 <= int(text) <= 200:
             state["体重"] = f"{int(text)}"
-            # アルコール
-            send_buttons(event.reply_token, "アルコールを常習的に摂取していますか？", [
-                {"label": "はい", "data": "alcohol_yes"},
-                {"label": "いいえ", "data": "alcohol_no"}
-            ])
+            send_buttons(
+                event.reply_token,
+                "アルコールを常習的に摂取していますか？",
+                [
+                    {"label": "はい", "data": "alcohol_yes"},
+                    {"label": "いいえ", "data": "alcohol_no"}
+                ]
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="体重は20〜200の数字で入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="体重は20〜200の数字で入力してください。")
+            )
         return
 
-    if step == "アルコール":
-        # ここはボタン回答のみなので通常は到達しない
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
-        return
-
-    if step == "副腎皮質ホルモン剤":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
-        return
-
-    if step == "がん":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
-        return
-
-    if step == "糖尿病":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
-        return
-
-    if step == "その他病気":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+    if step in ("アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気", "お薬服用", "アレルギー"):
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="画面のボタンからお答えください。")
+        )
         return
 
     if step == "病名":
         if text:
             state["病名"] = text
-            # お薬服用
-            send_buttons(event.reply_token, "現在、お薬を服用していますか？", [
-                {"label": "はい", "data": "med_yes"},
-                {"label": "いいえ", "data": "med_no"}
-            ])
+            send_buttons(
+                event.reply_token,
+                "現在、お薬を服用していますか？",
+                [
+                    {"label": "はい", "data": "med_yes"},
+                    {"label": "いいえ", "data": "med_no"}
+                ]
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="病名（不明なら治療内容）を入力してください。"))
-        return
-
-    if step == "お薬服用":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="病名（不明なら治療内容）を入力してください。")
+            )
         return
 
     if step == "服用薬":
         if text:
             state["服用薬"] = text
-            # アレルギー
-            send_buttons(event.reply_token, "アレルギーはありますか？", [
-                {"label": "はい", "data": "allergy_yes"},
-                {"label": "いいえ", "data": "allergy_no"}
-            ])
+            send_buttons(
+                event.reply_token,
+                "アレルギーはありますか？",
+                [
+                    {"label": "はい", "data": "allergy_yes"},
+                    {"label": "いいえ", "data": "allergy_no"}
+                ]
+            )
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="服用薬の名称を入力してください。"))
-        return
-
-    if step == "アレルギー":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画面のボタンからお答えください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="服用薬の名称を入力してください。")
+            )
         return
 
     if step == "アレルギー名":
@@ -312,16 +359,34 @@ def handle_text(event):
             state["アレルギー名"] = text
             finalize_response(event, user_id, state)
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名を入力してください。"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="アレルギー名を入力してください。")
+            )
         return
 
     # デフォルト
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="次の入力をお願いします。"))
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="次の入力をお願いします。")
+    )
 
-# ====== ポストバック処理（ボタン） ======
+# ====== ポストバック処理 ======
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
+
+    # フォローアップ前・待機中は固定メッセージを返す
+    if user_id in completed_users:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
+        )
+        return
+    # フォローアップ後は通常チャットへ移行
+    if user_id in released_users:
+        return
+
     state = user_states.setdefault(user_id, {})
     data = event.postback.data
 
@@ -348,69 +413,107 @@ def handle_postback(event):
         key, val = mapping[data]
         state[key] = val
 
-    # 分岐の流れ
     if data in ("gender_female", "gender_male"):
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="身長（cm）を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="身長（cm）を入力してください。")
+        )
         return
 
     if data in ("alcohol_yes", "alcohol_no"):
-        send_buttons(event.reply_token, "副腎皮質ホルモン剤を投与中ですか？", [
-            {"label": "はい", "data": "steroid_yes"},
-            {"label": "いいえ", "data": "steroid_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "副腎皮質ホルモン剤を投与中ですか？",
+            [
+                {"label": "はい", "data": "steroid_yes"},
+                {"label": "いいえ", "data": "steroid_no"}
+            ]
+        )
         return
 
     if data in ("steroid_yes", "steroid_no"):
-        send_buttons(event.reply_token, "がんにかかっていて治療中ですか？", [
-            {"label": "はい", "data": "cancer_yes"},
-            {"label": "いいえ", "data": "cancer_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "がんにかかっていて治療中ですか？",
+            [
+                {"label": "はい", "data": "cancer_yes"},
+                {"label": "いいえ", "data": "cancer_no"}
+            ]
+        )
         return
 
     if data in ("cancer_yes", "cancer_no"):
-        send_buttons(event.reply_token, "糖尿病で治療中ですか？", [
-            {"label": "はい", "data": "diabetes_yes"},
-            {"label": "いいえ", "data": "diabetes_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "糖尿病で治療中ですか？",
+            [
+                {"label": "はい", "data": "diabetes_yes"},
+                {"label": "いいえ", "data": "diabetes_no"}
+            ]
+        )
         return
 
     if data in ("diabetes_yes", "diabetes_no"):
-        send_buttons(event.reply_token, "そのほか現在、治療中、通院中の病気はありますか？", [
-            {"label": "はい", "data": "other_yes"},
-            {"label": "いいえ", "data": "other_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "そのほか現在、治療中、通院中の病気はありますか？",
+            [
+                {"label": "はい", "data": "other_yes"},
+                {"label": "いいえ", "data": "other_no"}
+            ]
+        )
         return
 
     if data == "other_yes":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="病気の名称（わからなければ治療内容）を入力してください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="病気の名称（わからなければ治療内容）を入力してください。")
+        )
         return
+
     if data == "other_no":
-        send_buttons(event.reply_token, "現在、お薬を服用していますか？", [
-            {"label": "はい", "data": "med_yes"},
-            {"label": "いいえ", "data": "med_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "現在、お薬を服用していますか？",
+            [
+                {"label": "はい", "data": "med_yes"},
+                {"label": "いいえ", "data": "med_no"}
+            ]
+        )
         return
 
     if data == "med_yes":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="お薬の名前をすべてお伝えください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="お薬の名前をすべてお伝えください。")
+        )
         return
+
     if data == "med_no":
-        send_buttons(event.reply_token, "アレルギーはありますか？", [
-            {"label": "はい", "data": "allergy_yes"},
-            {"label": "いいえ", "data": "allergy_no"}
-        ])
+        send_buttons(
+            event.reply_token,
+            "アレルギーはありますか？",
+            [
+                {"label": "はい", "data": "allergy_yes"},
+                {"label": "いいえ", "data": "allergy_no"}
+            ]
+        )
         return
 
     if data == "allergy_yes":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="アレルギー名をお伝えください。"))
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="アレルギー名をお伝えください。")
+        )
         return
+
     if data == "allergy_no":
         finalize_response(event, user_id, state)
         return
 
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
-    # 生年月日が分割で入っていれば整える
+    # 生年月日が分割で入っていれば整形
     if "生年月日" not in state and all(k in state for k in ("生年月日_年", "生年月日_月", "生年月日_日")):
         birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
@@ -423,17 +526,13 @@ def finalize_response(event, user_id, state):
     ]
 
     lines = []
-    # お名前（フリガナ）を最初に
     if "お名前" in state:
         if "フリガナ" in state:
             lines.append(f"お名前: {state['お名前']}（{state['フリガナ']}）")
         else:
             lines.append(f"お名前: {state['お名前']}")
-
     for k in ordered_keys:
-        if k in ("お名前", "フリガナ"):
-            continue
-        if k not in state:
+        if k in ("お名前", "フリガナ") or k not in state:
             continue
         v = state[k]
         if k == "生年月日":
@@ -441,7 +540,7 @@ def finalize_response(event, user_id, state):
                 bd = datetime.strptime(v, "%Y-%m-%d").date()
                 age = state.get("満年齢")
                 lines.append(f"生年月日: {bd.year}年{bd.month}月{bd.day}日（満{age}歳）")
-            except Exception:
+            except:
                 lines.append(f"生年月日: {v}")
         elif k == "身長":
             lines.append(f"身長: {v} cm")
@@ -449,30 +548,18 @@ def finalize_response(event, user_id, state):
             lines.append(f"体重: {v} kg")
         else:
             lines.append(f"{k}: {v}")
-
     summary_text = "\n".join(lines)
 
-    # ニックネーム
-    try:
-        nickname = line_bot_api.get_profile(user_id).display_name
-    except Exception:
-        nickname = "ご利用者様"
-
-    # 問診完了メッセージ
-    user_message = (
-        f"{nickname}様\n"
-        "ご回答、ありがとうございました。\n"
-        "以下がご入力いただいた内容になりますので、ご確認ください。\n\n"
-        f"{summary_text}\n\n"
-        "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事いたします。\n"
-        "医師による回答までに最大24時間（翌日午前9時までに回答）をいただきますことを、ご了承ください。"
+    # ユーザー向け即時通知（短いメッセージ）
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
     )
 
-    # 返信 & 事務局メール送信
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=user_message))
+    # 事務局へサマリーメール
     send_summary_email_to_office(summary_text, user_id)
 
-    # 翌朝送信用に完了時刻を保存
+    # 翌朝9時のフォローアップ用に保存
     completed_users[user_id] = (datetime.now(), summary_text)
 
     # ステート破棄
@@ -501,20 +588,22 @@ def send_followup(uid):
         "https://mit-tokyo.clinic/anela_japan/ghrp-2/"
     )
 
+    # 実際の送信
     line_bot_api.push_message(
         uid,
         messages=[TextSendMessage(text=combined_text)]
     )
-    
+
+    # 通常チャットへ移行
+    released_users.add(uid)
+
 # ====== 翌朝9時の自動送信（23:59締切分を配信） ======
 def schedule_daily_followup():
     now = datetime.now()
     yesterday = now.date() - timedelta(days=1)
     cutoff = datetime.combine(yesterday, time(23, 59, 59))
 
-    targets = [uid for uid, (finished_at, _summary_text) in completed_users.items() if finished_at <= cutoff]
-    print(f"[Followup] now={now:%Y-%m-%d %H:%M:%S} cutoff={cutoff:%Y-%m-%d %H:%M:%S} targets={len(targets)}")
-
+    targets = [uid for uid, (finished_at, _) in completed_users.items() if finished_at <= cutoff]
     for uid in targets:
         send_followup(uid)
         del completed_users[uid]
@@ -540,11 +629,11 @@ def admin_reset():
     user_states.clear()
     completed_users.clear()
     greeted_users.clear()
+    released_users.clear()
     return "All states reset", 200
 
 @app.route("/ping", methods=["GET", "HEAD"])
 def ping():
-    # ヘルスチェック / Keep-Alive 用
     return "pong", 200
 
 if __name__ == "__main__":
