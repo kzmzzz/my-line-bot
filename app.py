@@ -141,7 +141,9 @@ def send_buttons(reply_token, text, buttons):
     }
     line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text=text, contents=contents))
 
-# ====== テスト用 SMTP 到達確認エンドポイント ======
+
+
+
 @app.route("/debug/smtp-test", methods=["GET"])
 def debug_smtp():
     try:
@@ -151,13 +153,18 @@ def debug_smtp():
     except Exception as e:
         return f"SMTP error: {e}", 500
 
+
+
+
+
+
 # ====== テキスト受信 ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text    = event.message.text.strip()
 
-    # フォローアップ後は通常チャットへ移行
+    # フォローアップ後は通常チャットへ
     if user_id in released_users:
         return
 
@@ -188,7 +195,163 @@ def handle_text(event):
         )
         return
 
-    # ... (既存の各ステップ処理が続きます) ...
+    if step == "お名前":
+        state["お名前"] = text
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="フリガナ（カタカナ）を入力してください。")
+        )
+        return
+
+    if step == "フリガナ":
+        state["フリガナ"] = text
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="お電話番号（ハイフンなし）を入力してください。")
+        )
+        return
+
+    if step == "電話番号":
+        if text.isdigit() and len(text) in (10,11):
+            state["電話番号"] = text
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた西暦（4桁）を入力してください。")
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="電話番号は10桁または11桁の数字で入力してください。")
+            )
+        return
+
+    if step == "生年月日_年":
+        if text.isdigit() and len(text)==4 and 1900<=int(text)<=2100:
+            state["生年月日_年"] = int(text)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた月（1〜12）を入力してください。")
+            )
+            return
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="西暦4桁で入力してください（例：1988）")
+        )
+        return
+
+    if step == "生年月日_月":
+        if text.isdigit() and 1<=int(text)<=12:
+            state["生年月日_月"] = int(text)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた日（1〜31）を入力してください。")
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="月は1〜12の数字で入力してください。")
+            )
+        return
+
+    if step == "生年月日_日":
+        if text.isdigit():
+            d = int(text)
+            y = state.get("生年月日_年")
+            m = state.get("生年月日_月")
+            try:
+                birth = date(y,m,d)
+                state["生年月日_日"] = d
+                state["生年月日"]  = birth.strftime("%Y-%m-%d")
+                today = date.today()
+                age   = today.year - birth.year - ((today.month,today.day) < (birth.month,birth.day))
+                state["満年齢"] = age
+                send_buttons(
+                    event.reply_token,
+                    "性別を選択してください。",
+                    [{"label":"女","data":"gender_female"},{"label":"男","data":"gender_male"}]
+                )
+                return
+            except:
+                pass
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="正しい日付を入力してください。")
+        )
+        return
+
+    if step == "性別":
+        send_buttons(
+            event.reply_token,
+            "性別を選択してください。",
+            [{"label":"女","data":"gender_female"},{"label":"男","data":"gender_male"}]
+        )
+        return
+
+    if step == "身長":
+        if text.isdigit() and 100<=int(text)<=250:
+            state["身長"] = f"{int(text)}"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="体重（kg）を入力してください。")
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="身長は100〜250の数字で入力してください。")
+            )
+        return
+
+    if step == "体重":
+        if text.isdigit() and 20<=int(text)<=200:
+            state["体重"] = f"{int(text)}"
+            send_buttons(
+                event.reply_token,
+                "アルコールを常習的に摂取していますか？",
+                [{"label":"はい","data":"alcohol_yes"},{"label":"いいえ","data":"alcohol_no"}]
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="体重は20〜200の数字で入力してください。")
+            )
+        return
+
+    if step in ("アルコール","副腎皮質ホルモン剤","がん","糖尿病","その他病気","お薬服用","アレルギー"):
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="画面のボタンからお答えください。")
+        )
+        return
+
+    if step == "病名":
+        if text:
+            state["病名"] = text
+            send_buttons(
+                event.reply_token,
+                "現在、お薬を服用していますか？",
+                [{"label":"はい","data":"med_yes"},{"label":"いいえ","data":"med_no"}]
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="病名（不明なら治療内容）を入力してください。")
+            )
+        return
+
+    if step == "服用薬":
+        if text:
+            state["服用薬"] = text
+            send_buttons(
+                event.reply_token,
+                "アレルギーはありますか？",
+                [{"label":"はい","data":"allergy_yes"},{"label":"いいえ","data":"allergy_no"}]
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="服用薬の名称を入力してください。")
+            )
+        return
 
     if step == "アレルギー名":
         if text:
@@ -226,21 +389,124 @@ def handle_postback(event):
     state = user_states.setdefault(user_id, {})
     data  = event.postback.data
 
-    # ... (既存のポストバック処理が続きます) ...
+    mapping = {
+        "gender_female": ("性別", "女"),
+        "gender_male":   ("性別", "男"),
+        "alcohol_yes":   ("アルコール", "はい"),
+        "alcohol_no":    ("アルコール", "いいえ"),
+        "steroid_yes":   ("副腎皮質ホルモン剤", "はい"),
+        "steroid_no":    ("副腎皮質ホルモン剤", "いいえ"),
+        "cancer_yes":    ("がん", "はい"),
+        "cancer_no":     ("がん", "いいえ"),
+        "diabetes_yes":  ("糖尿病", "はい"),
+        "diabetes_no":   ("糖尿病", "いいえ"),
+        "other_yes":     ("その他病気", "はい"),
+        "other_no":      ("その他病気", "いいえ"),
+        "med_yes":       ("お薬服用", "はい"),
+        "med_no":        ("お薬服用", "いいえ"),
+        "allergy_yes":   ("アレルギー", "はい"),
+        "allergy_no":    ("アレルギー", "いいえ"),
+    }
+
+    if data in mapping:
+        key,val = mapping[data]
+        state[key] = val
+
+    if data in ("gender_female","gender_male"):
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="身長（cm）を入力してください。")
+        )
+        return
+
+    if data in ("alcohol_yes","alcohol_no"):
+        send_buttons(
+            event.reply_token,
+            "副腎皮質ホルモン剤を投与中ですか？",
+            [{"label":"はい","data":"steroid_yes"},{"label":"いいえ","data":"steroid_no"}]
+        )
+        return
+
+    if data in ("steroid_yes","steroid_no"):
+        send_buttons(
+            event.reply_token,
+            "がんにかかっていて治療中ですか？",
+            [{"label":"はい","data":"cancer_yes"},{"label":"いいえ","data":"cancer_no"}]
+        )
+        return
+
+    if data in ("cancer_yes","cancer_no"):
+        send_buttons(
+            event.reply_token,
+            "糖尿病で治療中ですか？",
+            [{"label":"はい","data":"diabetes_yes"},{"label":"いいえ","data":"diabetes_no"}]
+        )
+        return
+
+    if data in ("diabetes_yes","diabetes_no"):
+        send_buttons(
+            event.reply_token,
+            "そのほか現在、治療中、通院中の病気はありますか？",
+            [{"label":"はい","data":"other_yes"},{"label":"いいえ","data":"other_no"}]
+        )
+        return
+
+    if data == "other_yes":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="病気の名称（わからなければ治療内容）を入力してください。")
+        )
+        return
+
+    if data == "other_no":
+        send_buttons(
+            event.reply_token,
+            "現在、お薬を服用していますか？",
+            [{"label":"はい","data":"med_yes"},{"label":"いいえ","data":"med_no"}]
+        )
+        return
+
+    if data == "med_yes":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="お薬の名前をすべてお伝えください。")
+        )
+        return
+
+    if data == "med_no":
+        send_buttons(
+            event.reply_token,
+            "アレルギーはありますか？",
+            [{"label":"はい","data":"allergy_yes"},{"label":"いいえ","data":"allergy_no"}]
+        )
+        return
+
+    if data == "allergy_yes":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="アレルギー名をお伝えください。")
+        )
+        return
+
+    if data == "allergy_no":
+        finalize_response(event, user_id, state)
+        return
 
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
+    # 生年月日が分割で入っていれば整形
     if "生年月日" not in state and all(k in state for k in ("生年月日_年","生年月日_月","生年月日_日")):
-        birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
+        birth = date(state["生年月日_年"],state["生年月日_月"],state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
 
+    # サマリー作成
     ordered_keys = [
         "都道府県","お名前","フリガナ","電話番号",
         "生年月日","性別","身長","体重",
         "アルコール","副腎皮質ホルモン剤","がん","糖尿病","その他病気",
         "病名","お薬服用","服用薬","アレルギー","アレルギー名"
     ]
-    lines = []
+    lines=[]
     if "お名前" in state:
         if "フリガナ" in state:
             lines.append(f"お名前: {state['お名前']}（{state['フリガナ']}）")
@@ -249,15 +515,28 @@ def finalize_response(event, user_id, state):
     for k in ordered_keys:
         if k in ("お名前","フリガナ") or k not in state:
             continue
-        v = state[k]
-        # ... (サマリー作成処理) ...
-    summary_text = "\n".join(lines)
+        v=state[k]
+        if k=="生年月日":
+            try:
+                bd = datetime.strptime(v,"%Y-%m-%d").date()
+                age=state.get("満年齢")
+                lines.append(f"生年月日: {bd.year}年{bd.month}月{bd.day}日（満{age}歳）")
+            except:
+                lines.append(f"生年月日: {v}")
+        elif k=="身長":
+            lines.append(f"身長: {v} cm")
+        elif k=="体重":
+            lines.append(f"体重: {v} kg")
+        else:
+            lines.append(f"{k}: {v}")
+    summary_text="\n".join(lines)
 
     # 元の問診完了メッセージを表示
     try:
         nickname = line_bot_api.get_profile(user_id).display_name
     except:
         nickname = "ご利用者様"
+
     user_message = (
         f"{nickname}様\n"
         "ご回答、ありがとうございました。\n"
@@ -267,6 +546,8 @@ def finalize_response(event, user_id, state):
         "医師による回答までに最大24時間（翌日午前9時までに回答）をいただきますことを、ご了承ください。"
     )
 
+    # ① 詳細サマリー＋お礼
+    # ② 固定待機メッセージ
     line_bot_api.reply_message(
         event.reply_token,
         [
@@ -274,11 +555,17 @@ def finalize_response(event, user_id, state):
             TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
         ]
     )
+
+    # 事務局へサマリーメール
     send_summary_email_to_office(summary_text, user_id)
+
+    # 翌朝9時のフォローアップ用に保存
     completed_users[user_id] = (datetime.now(), summary_text)
+
+    # ステート破棄
     user_states.pop(user_id, None)
 
-# ====== フォローアップ送信 ======
+# ====== フォローアップ送信（詳細） ======
 from linebot.models import TextSendMessage
 
 def send_followup(uid):
@@ -286,21 +573,37 @@ def send_followup(uid):
         nickname = line_bot_api.get_profile(uid).display_name
     except:
         nickname = "ご利用者様"
+
     combined_text = (
         f"{nickname}様の問診内容を確認しました。\n"
         "GHRP-2を定期的に服用されることについて、問題はありません。\n"
         "下記より処方のお手続きにお進みください。\n\n"
-        # ... (フォローアップ詳細本文) ...
+        "なお、処方計画は次のとおりです。この計画にもとづき、"
+        "継続的に医療用医薬品をお届けします。\n\n"
+        "１クール　30日分\n"
+        "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
+        "初回は３クール（90日分＝180錠）をお届けします。\n"
+        "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
+        "※半年ごとに定期問診を行います（無料）。\n\n"
+        "ご購入はこちらから >>\n"
+        "https://mit-tokyo.clinic/anela_japan/ghrp-2/"
     )
-    line_bot_api.push_message(uid, messages=[TextSendMessage(text=combined_text)])
+
+    line_bot_api.push_message(
+        uid,
+        messages=[TextSendMessage(text=combined_text)]
+    )
+
+    # 通常チャットへ移行
     released_users.add(uid)
 
-# ====== スケジュールジョブ ======
+# ====== 翌朝9時の自動送信 ======
 def schedule_daily_followup():
     now       = datetime.now()
     yesterday = now.date() - timedelta(days=1)
     cutoff    = datetime.combine(yesterday, time(23,59,59))
-    targets   = [uid for uid,(finished_at,_) in completed_users.items() if finished_at <= cutoff]
+
+    targets = [uid for uid,(finished_at,_) in completed_users.items() if finished_at <= cutoff]
     for uid in targets:
         send_followup(uid)
         del completed_users[uid]
