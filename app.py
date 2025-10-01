@@ -18,8 +18,8 @@ app = Flask(__name__)
 
 # ====== 環境変数 ======
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-ACCOUNT_NAME = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
+LINE_CHANNEL_SECRET       = os.getenv("LINE_CHANNEL_SECRET")
+ACCOUNT_NAME              = os.getenv("LINE_BOT_NAME", "東京MITクリニック")
 
 SMTP_HOST = os.getenv("SMTP_HOST", "eel-style.sakura.ne.jp")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -29,13 +29,13 @@ SMTP_FROM = os.getenv("SMTP_FROM", "website@eel.style")
 OFFICE_TO = os.getenv("OFFICE_TO", "website@eel.style")  # 事務局宛
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+handler      = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ====== 状態管理 ======
-user_states = {}                 # user_id -> dict(回答ステート)
-completed_users = {}             # user_id -> (完了日時, サマリー文字列)
-greeted_users = set()            # フォローアップ前に案内済み
-released_users = set()           # フォローアップ後に通常チャットへ移行したユーザー
+user_states     = {}  # user_id -> dict(回答ステート)
+completed_users = {}  # user_id -> (完了日時, サマリー文字列)
+greeted_users   = set()
+released_users  = set()
 
 # ====== 質問フロー ======
 QUESTION_STEPS = [
@@ -43,9 +43,9 @@ QUESTION_STEPS = [
     "生年月日_年", "生年月日_月", "生年月日_日",
     "性別", "身長", "体重",
     "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気",
-    "病名",                     # 「その他病気=はい」のときのみ
-    "お薬服用", "服用薬",       # 「お薬服用=はい」のときのみ
-    "アレルギー", "アレルギー名" # 「アレルギー=はい」のときのみ
+    "病名",       # 「その他病気=はい」のときのみ
+    "お薬服用", "服用薬",  # 「お薬服用=はい」のときのみ
+    "アレルギー", "アレルギー名"  # 「アレルギー=はい」のときのみ
 ]
 
 def get_next_question(state):
@@ -65,12 +65,12 @@ def send_summary_email_to_office(summary, user_id):
     subject = "東京MITクリニック 妊活オンライン診療：問診を受け付けました（事務局通知）"
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
-    msg["To"] = OFFICE_TO
+    msg["From"]    = SMTP_FROM
+    msg["To"]      = OFFICE_TO
 
     try:
         nickname = line_bot_api.get_profile(user_id).display_name
-    except Exception:
+    except:
         nickname = "ご利用者様"
 
     msg.set_content(
@@ -86,7 +86,7 @@ def send_summary_email_to_office(summary, user_id):
             try:
                 smtp.starttls()
                 smtp.ehlo()
-            except Exception:
+            except:
                 pass
             if SMTP_USER and SMTP_PASS:
                 smtp.login(SMTP_USER, SMTP_PASS)
@@ -100,7 +100,7 @@ def start_registration(user_id, reply_token):
     completed_users.pop(user_id, None)
     try:
         _ = line_bot_api.get_profile(user_id).display_name
-    except Exception:
+    except:
         pass
     line_bot_api.reply_message(
         reply_token,
@@ -139,20 +139,19 @@ def send_buttons(reply_token, text, buttons):
             ]
         }
     }
-    message = FlexSendMessage(alt_text=text, contents=contents)
-    line_bot_api.reply_message(reply_token, message)
+    line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text=text, contents=contents))
 
 # ====== テキスト受信 ======
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
-    text = event.message.text.strip()
+    text    = event.message.text.strip()
 
-    # フォローアップ後は通常チャットへ移行
+    # フォローアップ後は通常チャットへ
     if user_id in released_users:
         return
 
-    # 問診完了後、回答待ち期間中は固定メッセージを返す
+    # 完了後〜翌朝9時までは固定メッセージ
     if user_id in completed_users:
         line_bot_api.reply_message(
             event.reply_token,
@@ -163,7 +162,7 @@ def handle_text(event):
     state = user_states.setdefault(user_id, {})
 
     # フォールバック：FollowEvent取りこぼし時
-    if (user_id not in greeted_users) and (not state):
+    if (user_id not in greeted_users) and not state:
         greeted_users.add(user_id)
         start_registration(user_id, event.reply_token)
         return
@@ -196,7 +195,7 @@ def handle_text(event):
         return
 
     if step == "電話番号":
-        if text.isdigit() and len(text) in (10, 11):
+        if text.isdigit() and len(text) in (10,11):
             state["電話番号"] = text
             line_bot_api.reply_message(
                 event.reply_token,
@@ -210,15 +209,13 @@ def handle_text(event):
         return
 
     if step == "生年月日_年":
-        if text.isdigit() and len(text) == 4:
-            y = int(text)
-            if 1900 <= y <= 2100:
-                state["生年月日_年"] = y
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text="生まれた月（1〜12）を入力してください。")
-                )
-                return
+        if text.isdigit() and len(text)==4 and 1900<=int(text)<=2100:
+            state["生年月日_年"] = int(text)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="生まれた月（1〜12）を入力してください。")
+            )
+            return
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="西暦4桁で入力してください（例：1988）")
@@ -226,7 +223,7 @@ def handle_text(event):
         return
 
     if step == "生年月日_月":
-        if text.isdigit() and 1 <= int(text) <= 12:
+        if text.isdigit() and 1<=int(text)<=12:
             state["生年月日_月"] = int(text)
             line_bot_api.reply_message(
                 event.reply_token,
@@ -245,22 +242,19 @@ def handle_text(event):
             y = state.get("生年月日_年")
             m = state.get("生年月日_月")
             try:
-                birth = date(y, m, d)
+                birth = date(y,m,d)
                 state["生年月日_日"] = d
-                state["生年月日"] = birth.strftime("%Y-%m-%d")
+                state["生年月日"]  = birth.strftime("%Y-%m-%d")
                 today = date.today()
-                age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+                age   = today.year - birth.year - ((today.month,today.day) < (birth.month,birth.day))
                 state["満年齢"] = age
                 send_buttons(
                     event.reply_token,
                     "性別を選択してください。",
-                    [
-                        {"label": "女", "data": "gender_female"},
-                        {"label": "男", "data": "gender_male"}
-                    ]
+                    [{"label":"女","data":"gender_female"},{"label":"男","data":"gender_male"}]
                 )
                 return
-            except ValueError:
+            except:
                 pass
         line_bot_api.reply_message(
             event.reply_token,
@@ -272,15 +266,12 @@ def handle_text(event):
         send_buttons(
             event.reply_token,
             "性別を選択してください。",
-            [
-                {"label": "女", "data": "gender_female"},
-                {"label": "男", "data": "gender_male"}
-            ]
+            [{"label":"女","data":"gender_female"},{"label":"男","data":"gender_male"}]
         )
         return
 
     if step == "身長":
-        if text.isdigit() and 100 <= int(text) <= 250:
+        if text.isdigit() and 100<=int(text)<=250:
             state["身長"] = f"{int(text)}"
             line_bot_api.reply_message(
                 event.reply_token,
@@ -294,15 +285,12 @@ def handle_text(event):
         return
 
     if step == "体重":
-        if text.isdigit() and 20 <= int(text) <= 200:
+        if text.isdigit() and 20<=int(text)<=200:
             state["体重"] = f"{int(text)}"
             send_buttons(
                 event.reply_token,
                 "アルコールを常習的に摂取していますか？",
-                [
-                    {"label": "はい", "data": "alcohol_yes"},
-                    {"label": "いいえ", "data": "alcohol_no"}
-                ]
+                [{"label":"はい","data":"alcohol_yes"},{"label":"いいえ","data":"alcohol_no"}]
             )
         else:
             line_bot_api.reply_message(
@@ -311,7 +299,7 @@ def handle_text(event):
             )
         return
 
-    if step in ("アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気", "お薬服用", "アレルギー"):
+    if step in ("アルコール","副腎皮質ホルモン剤","がん","糖尿病","その他病気","お薬服用","アレルギー"):
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="画面のボタンからお答えください。")
@@ -324,10 +312,7 @@ def handle_text(event):
             send_buttons(
                 event.reply_token,
                 "現在、お薬を服用していますか？",
-                [
-                    {"label": "はい", "data": "med_yes"},
-                    {"label": "いいえ", "data": "med_no"}
-                ]
+                [{"label":"はい","data":"med_yes"},{"label":"いいえ","data":"med_no"}]
             )
         else:
             line_bot_api.reply_message(
@@ -342,10 +327,7 @@ def handle_text(event):
             send_buttons(
                 event.reply_token,
                 "アレルギーはありますか？",
-                [
-                    {"label": "はい", "data": "allergy_yes"},
-                    {"label": "いいえ", "data": "allergy_no"}
-                ]
+                [{"label":"はい","data":"allergy_yes"},{"label":"いいえ","data":"allergy_no"}]
             )
         else:
             line_bot_api.reply_message(
@@ -376,7 +358,7 @@ def handle_text(event):
 def handle_postback(event):
     user_id = event.source.user_id
 
-    # フォローアップ前・待機中は固定メッセージを返す
+    # 完了後〜翌朝9時までは固定メッセージ
     if user_id in completed_users:
         line_bot_api.reply_message(
             event.reply_token,
@@ -388,7 +370,7 @@ def handle_postback(event):
         return
 
     state = user_states.setdefault(user_id, {})
-    data = event.postback.data
+    data  = event.postback.data
 
     mapping = {
         "gender_female": ("性別", "女"),
@@ -410,57 +392,45 @@ def handle_postback(event):
     }
 
     if data in mapping:
-        key, val = mapping[data]
+        key,val = mapping[data]
         state[key] = val
 
-    if data in ("gender_female", "gender_male"):
+    if data in ("gender_female","gender_male"):
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="身長（cm）を入力してください。")
         )
         return
 
-    if data in ("alcohol_yes", "alcohol_no"):
+    if data in ("alcohol_yes","alcohol_no"):
         send_buttons(
             event.reply_token,
             "副腎皮質ホルモン剤を投与中ですか？",
-            [
-                {"label": "はい", "data": "steroid_yes"},
-                {"label": "いいえ", "data": "steroid_no"}
-            ]
+            [{"label":"はい","data":"steroid_yes"},{"label":"いいえ","data":"steroid_no"}]
         )
         return
 
-    if data in ("steroid_yes", "steroid_no"):
+    if data in ("steroid_yes","steroid_no"):
         send_buttons(
             event.reply_token,
             "がんにかかっていて治療中ですか？",
-            [
-                {"label": "はい", "data": "cancer_yes"},
-                {"label": "いいえ", "data": "cancer_no"}
-            ]
+            [{"label":"はい","data":"cancer_yes"},{"label":"いいえ","data":"cancer_no"}]
         )
         return
 
-    if data in ("cancer_yes", "cancer_no"):
+    if data in ("cancer_yes","cancer_no"):
         send_buttons(
             event.reply_token,
             "糖尿病で治療中ですか？",
-            [
-                {"label": "はい", "data": "diabetes_yes"},
-                {"label": "いいえ", "data": "diabetes_no"}
-            ]
+            [{"label":"はい","data":"diabetes_yes"},{"label":"いいえ","data":"diabetes_no"}]
         )
         return
 
-    if data in ("diabetes_yes", "diabetes_no"):
+    if data in ("diabetes_yes","diabetes_no"):
         send_buttons(
             event.reply_token,
             "そのほか現在、治療中、通院中の病気はありますか？",
-            [
-                {"label": "はい", "data": "other_yes"},
-                {"label": "いいえ", "data": "other_no"}
-            ]
+            [{"label":"はい","data":"other_yes"},{"label":"いいえ","data":"other_no"}]
         )
         return
 
@@ -475,10 +445,7 @@ def handle_postback(event):
         send_buttons(
             event.reply_token,
             "現在、お薬を服用していますか？",
-            [
-                {"label": "はい", "data": "med_yes"},
-                {"label": "いいえ", "data": "med_no"}
-            ]
+            [{"label":"はい","data":"med_yes"},{"label":"いいえ","data":"med_no"}]
         )
         return
 
@@ -493,10 +460,7 @@ def handle_postback(event):
         send_buttons(
             event.reply_token,
             "アレルギーはありますか？",
-            [
-                {"label": "はい", "data": "allergy_yes"},
-                {"label": "いいえ", "data": "allergy_no"}
-            ]
+            [{"label":"はい","data":"allergy_yes"},{"label":"いいえ","data":"allergy_no"}]
         )
         return
 
@@ -514,46 +478,65 @@ def handle_postback(event):
 # ====== まとめ & 送信 ======
 def finalize_response(event, user_id, state):
     # 生年月日が分割で入っていれば整形
-    if "生年月日" not in state and all(k in state for k in ("生年月日_年", "生年月日_月", "生年月日_日")):
-        birth = date(state["生年月日_年"], state["生年月日_月"], state["生年月日_日"])
+    if "生年月日" not in state and all(k in state for k in ("生年月日_年","生年月日_月","生年月日_日")):
+        birth = date(state["生年月日_年"],state["生年月日_月"],state["生年月日_日"])
         state["生年月日"] = birth.strftime("%Y-%m-%d")
 
+    # サマリー作成
     ordered_keys = [
-        "都道府県", "お名前", "フリガナ", "電話番号",
-        "生年月日", "性別", "身長", "体重",
-        "アルコール", "副腎皮質ホルモン剤", "がん", "糖尿病", "その他病気",
-        "病名", "お薬服用", "服用薬", "アレルギー", "アレルギー名"
+        "都道府県","お名前","フリガナ","電話番号",
+        "生年月日","性別","身長","体重",
+        "アルコール","副腎皮質ホルモン剤","がん","糖尿病","その他病気",
+        "病名","お薬服用","服用薬","アレルギー","アレルギー名"
     ]
-
-    lines = []
+    lines=[]
     if "お名前" in state:
         if "フリガナ" in state:
             lines.append(f"お名前: {state['お名前']}（{state['フリガナ']}）")
         else:
             lines.append(f"お名前: {state['お名前']}")
     for k in ordered_keys:
-        if k in ("お名前", "フリガナ") or k not in state:
+        if k in ("お名前","フリガナ") or k not in state:
             continue
-        v = state[k]
-        if k == "生年月日":
+        v=state[k]
+        if k=="生年月日":
             try:
-                bd = datetime.strptime(v, "%Y-%m-%d").date()
-                age = state.get("満年齢")
+                bd = datetime.strptime(v,"%Y-%m-%d").date()
+                age=state.get("満年齢")
                 lines.append(f"生年月日: {bd.year}年{bd.month}月{bd.day}日（満{age}歳）")
             except:
                 lines.append(f"生年月日: {v}")
-        elif k == "身長":
+        elif k=="身長":
             lines.append(f"身長: {v} cm")
-        elif k == "体重":
+        elif k=="体重":
             lines.append(f"体重: {v} kg")
         else:
             lines.append(f"{k}: {v}")
-    summary_text = "\n".join(lines)
+    summary_text="\n".join(lines)
 
-    # ユーザー向け即時通知（短いメッセージ）
+    # 元の問診完了メッセージを表示
+    try:
+        nickname = line_bot_api.get_profile(user_id).display_name
+    except:
+        nickname = "ご利用者様"
+
+    user_message = (
+        f"{nickname}様\n"
+        "ご回答、ありがとうございました。\n"
+        "以下がご入力いただいた内容になりますので、ご確認ください。\n\n"
+        f"{summary_text}\n\n"
+        "このあと、問診に対する記入内容を確認し、お薬を処方できるか否か、お返事いたします。\n"
+        "医師による回答までに最大24時間（翌日午前9時までに回答）をいただきますことを、ご了承ください。"
+    )
+
+    # ① 詳細サマリー＋お礼
+    # ② 固定待機メッセージ
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
+        [
+            TextSendMessage(text=user_message),
+            TextSendMessage(text="問診を受け付けました。回答まで今しばらくお待ち下さい。")
+        ]
     )
 
     # 事務局へサマリーメール
@@ -565,20 +548,21 @@ def finalize_response(event, user_id, state):
     # ステート破棄
     user_states.pop(user_id, None)
 
-# ====== フォローアップ送信（本文＋詳細） ======
+# ====== フォローアップ送信（詳細） ======
 from linebot.models import TextSendMessage
 
 def send_followup(uid):
     try:
         nickname = line_bot_api.get_profile(uid).display_name
-    except Exception:
+    except:
         nickname = "ご利用者様"
 
     combined_text = (
         f"{nickname}様の問診内容を確認しました。\n"
         "GHRP-2を定期的に服用されることについて、問題はありません。\n"
         "下記より処方のお手続きにお進みください。\n\n"
-        "なお、処方計画は次のとおりです。この計画にもとづき、継続的に医療用医薬品をお届けします。\n\n"
+        "なお、処方計画は次のとおりです。この計画にもとづき、"
+        "継続的に医療用医薬品をお届けします。\n\n"
         "１クール　30日分\n"
         "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
         "初回は３クール（90日分＝180錠）をお届けします。\n"
@@ -588,7 +572,6 @@ def send_followup(uid):
         "https://mit-tokyo.clinic/anela_japan/ghrp-2/"
     )
 
-    # 実際の送信
     line_bot_api.push_message(
         uid,
         messages=[TextSendMessage(text=combined_text)]
@@ -597,18 +580,17 @@ def send_followup(uid):
     # 通常チャットへ移行
     released_users.add(uid)
 
-# ====== 翌朝9時の自動送信（23:59締切分を配信） ======
+# ====== 翌朝9時の自動送信 ======
 def schedule_daily_followup():
-    now = datetime.now()
+    now       = datetime.now()
     yesterday = now.date() - timedelta(days=1)
-    cutoff = datetime.combine(yesterday, time(23, 59, 59))
+    cutoff    = datetime.combine(yesterday, time(23,59,59))
 
-    targets = [uid for uid, (finished_at, _) in completed_users.items() if finished_at <= cutoff]
+    targets = [uid for uid,(finished_at,_) in completed_users.items() if finished_at <= cutoff]
     for uid in targets:
         send_followup(uid)
         del completed_users[uid]
 
-# ====== APScheduler 起動（毎日9:00 JST） ======
 scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
 scheduler.add_job(schedule_daily_followup, 'cron', hour=9, minute=0)
 scheduler.start()
@@ -617,7 +599,7 @@ scheduler.start()
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
-    body = request.get_data(as_text=True)
+    body      = request.get_data(as_text=True)
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
@@ -632,7 +614,7 @@ def admin_reset():
     released_users.clear()
     return "All states reset", 200
 
-@app.route("/ping", methods=["GET", "HEAD"])
+@app.route("/ping", methods=["GET","HEAD"])
 def ping():
     return "pong", 200
 
