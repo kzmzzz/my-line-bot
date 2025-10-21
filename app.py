@@ -582,11 +582,11 @@ def send_followup(uid):
         "継続的に医療用医薬品をお届けします。\n\n"
         "１クール　30日分\n"
         "GHRP-2　60錠　一日２錠を眠前１時間以内を目安に服用\n\n"
-        "初回は３クール（90日分＝180錠）をお届けします。\n"
+        "初回は１クール（30日分＝60錠）をお届けします。\n"
         "以降、服用中止の申し出をいただくまでの間、30日ごとに１クールを継続的にお届けします。\n"
         "※半年ごとに定期問診を行います（無料）。\n\n"
         "ご購入はこちらから >>\n"
-        "https://mit-tokyo.clinic/anela_japan/ghrp-2/"
+        "https://mit-tokyo.clinic/anela_japan/ghrp-2_third/"
     )
 
     line_bot_api.push_message(
